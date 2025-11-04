@@ -7,7 +7,7 @@
 
 // 定义一个简单的静态令牌用于管理员认证
 // 在实际生产中，您应该使用更安全的方法（如 JWT），但对于个人项目和“临时登录”的要求，这足够简单
-const ADMIN_TOKEN = "your-secret-admin-token-12345";
+const ADMIN_TOKEN = "my-secret-admin-token-1234";
 
 export default {
   async fetch(request, env, ctx) {
@@ -249,6 +249,60 @@ function getHtml(env) {
     <link rel="shortcut icon" href="https://www.guao.de/logos/cards.ico" type="image/x-icon" />
     <link rel="icon" href="https://www.guao.de/logos/cards.ico" />
     <title>卡掌柜</title>
+    
+    <style>
+    body {
+        overflow-y: scroll;
+    }
+    .status.cards .thirteen.wide.column { 
+        white-space: nowrap; /* 防止文本换行 */
+        overflow: hidden; /* 隐藏溢出的内容 */
+        letter-spacing: -0.2px;/* 字符间距略小 */
+    }
+    </style>
+
+<!-- 返回顶部按钮 -->
+<button id="topBtn" class="top-btn" 
+    style="display: none; position: fixed; bottom: 20px; right: 20px; z-index: 9999; 
+           background-color: #ffcc00; color: white; border: none; border-radius: 50%; 
+           width: 40px; height: 40px; font-size: 20px; display: flex; 
+           align-items: center; justify-content: center; cursor: pointer;">
+    ▲
+</button>
+
+<script>
+    // 获取返回顶部按钮
+    const topBtn = document.getElementById('topBtn');
+
+    // 当DOM加载完成后执行
+    document.addEventListener('DOMContentLoaded', function() {
+        // 监听滚动事件
+        window.onscroll = function() { scrollFunction(); };
+
+        // 显示或隐藏返回顶部按钮
+        function scrollFunction() {
+            if (document.body.scrollTop > 70 || document.documentElement.scrollTop > 70) {
+                topBtn.style.display = "block";
+            } else {
+                topBtn.style.display = "none";
+            }
+        }
+
+        // 点击按钮时滚动到顶部
+        topBtn.addEventListener('click', function() {
+            document.body.scrollTop = 0; // 对于 Safari
+            document.documentElement.scrollTop = 0; // 对于 Chrome, Firefox, IE 和 Opera
+        });
+    });
+</script>
+
+<script>
+    document.querySelectorAll('.status.cards .thirteen.wide.column').forEach(element => {
+        element.textContent = element.textContent.replace(/Cores/g, 'C');
+    });
+</script>
+    
+    
     <!-- 引入 Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- 引入 Lucide Icons -->
@@ -282,7 +336,7 @@ function getHtml(env) {
             font-weight: bold;
         }
         .calendar-day.other-month {
-            color: #4a5568; /* gray-600 */
+            color: #4a5568; /* gray-700 */
         }
         .calendar-day.highlight-billing {
             background-color: #38a169; /* green-600 */
@@ -330,10 +384,10 @@ function getHtml(env) {
         }
     </style>
 </head>
-<body class="bg-gray-900 text-gray-200">
+<body class="bg-white text-gray-900">
 
     <!-- 主容器 -->
-    <div class="max-w-md mx-auto min-h-screen bg-gray-900 pb-16">
+    <div class="max-w-md mx-auto min-h-screen bg-white pb-16">
 
         <!-- ====================== -->
         <!-- 1. 主页面 (卡片概览)   -->
@@ -359,16 +413,16 @@ function getHtml(env) {
 
             <!-- 统计概览 -->
             <div class="grid grid-cols-3 gap-3 px-4">
-                <div class="bg-gray-800 p-3 rounded-lg text-center">
-                    <div class="text-sm text-gray-400">卡片总数</div>
+                <div class="bg-gray-50 p-3 rounded-lg text-center">
+                    <div class="text-sm text-gray-600">卡片总数</div>
                     <div id="stat-total-cards" class="text-2xl font-bold">0 张</div>
                 </div>
-                <div class="bg-gray-800 p-3 rounded-lg text-center">
-                    <div class="text-sm text-gray-400">7日内待还</div>
+                <div class="bg-gray-50 p-3 rounded-lg text-center">
+                    <div class="text-sm text-gray-600">7日内待还</div>
                     <div id="stat-due-in-7" class="text-2xl font-bold">0 张</div>
                 </div>
-                <div class="bg-gray-800 p-3 rounded-lg text-center">
-                    <div class="text-sm text-gray-400">最长免息期</div>
+                <div class="bg-gray-50 p-3 rounded-lg text-center">
+                    <div class="text-sm text-gray-600">最长免息期</div>
                     <div id="stat-max-grace" class="text-2xl font-bold">0 天</div>
                 </div>
             </div>
@@ -377,47 +431,48 @@ function getHtml(env) {
             <div class="px-4 mt-4">
                 <div class="relative">
                     <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                        <i data-lucide="search" class="w-5 h-5 text-gray-400"></i>
+                        <i data-lucide="search" class="w-5 h-5 text-gray-600"></i>
                     </div>
-                    <input type="search" id="search-bar" class="w-full bg-gray-800 border border-gray-700 rounded-lg pl-10 pr-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="搜索银行名称">
+                    <input type="search" id="search-bar" class="w-full bg-white border border-gray-300 rounded-lg pl-10 pr-4 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="搜索银行名称">
                 </div>
             </div>
 
             <!-- 日历控件 -->
             <div class="px-4 mt-4">
-                <div class="bg-gray-800 p-4 rounded-lg">
+                <div class="bg-gray-50 p-4 rounded-lg">
                     <!-- 日历头部 -->
                     <div class="flex justify-between items-center mb-3">
                         <button id="calendar-prev-month">
-                            <i data-lucide="chevron-left" class="w-5 h-5"></i>
+                            <i data-lucide="chevron-left" class="w-5 h-5 text-gray-900"></i>
                         </button>
                         <div class="text-center">
                             <div id="calendar-month-year" class="font-bold"></div>
-                            <div id="calendar-toggle-mode" class="text-xs text-gray-400 cursor-pointer">
+                            <div id="calendar-toggle-mode" class="text-xs text-gray-600 cursor-pointer">
                                 (点击切换标注模式)
                             </div>
                         </div>
                         <button id="calendar-next-month">
-                            <i data-lucide="chevron-right" class="w-5 h-5"></i>
+                            <i data-lucide="chevron-right" class="w-5 h-5 text-gray-900"></i>
                         </button>
                     </div>
                     <!-- 日历网格 -->
                     <div class="calendar-grid text-sm mb-2">
-                        <div class="text-center font-bold text-gray-400">日</div>
-                        <div class="text-center font-bold text-gray-400">一</div>
-                        <div class="text-center font-bold text-gray-400">二</div>
-                        <div class="text-center font-bold text-gray-400">三</div>
-                        <div class="text-center font-bold text-gray-400">四</div>
-                        <div class="text-center font-bold text-gray-400">五</div>
-                        <div class="text-center font-bold text-gray-400">六</div>
+                        <div class="text-center font-bold text-gray-600">日</div>
+                        <div class="text-center font-bold text-gray-600">一</div>
+                        <div class="text-center font-bold text-gray-600">二</div>
+                        <div class="text-center font-bold text-gray-600">三</div>
+                        <div class="text-center font-bold text-gray-600">四</div>
+                        <div class="text-center font-bold text-gray-600">五</div>
+                        <div class="text-center font-bold text-gray-600">六</div>
                     </div>
                     <div id="calendar-body" class="calendar-grid text-sm">
                         <!-- 日期单元格将由 JS 填充 -->
                     </div>
                     <!-- 图例 -->
-                    <div class="text-xs text-gray-400 mt-3 flex justify-center items-center space-x-4">
-                        <span class="flex items-center"><span class="w-3 h-3 bg-green-600 rounded-full mr-1"></span> 账单日</span>
-                        <span class="flex items-center"><span class="w-3 h-3 bg-red-600 rounded-full mr-1"></span> 还款日</span>
+                    <div class="text-xs text-gray-600 mt-3 flex justify-center items-center space-x-4">
+                    <span class="flex items-center"><span class="w-3 h-3 bg-gray-600 rounded-full mr-1"></span> 今日</span>    
+                    <span class="flex items-center"><span class="w-3 h-3 bg-green-600 rounded-full mr-1"></span> 账单日</span>
+                    <span class="flex items-center"><span class="w-3 h-3 bg-red-600 rounded-full mr-1"></span> 还款日</span>
                     </div>
                 </div>
             </div>
@@ -434,7 +489,7 @@ function getHtml(env) {
                 </div>
 
                 <!-- 列表表头: 调整为 grid-cols-7，重新分配列宽 -->
-                <div class="grid grid-cols-7 gap-1 text-xs text-gray-400 px-3 py-2">
+                <div class="grid grid-cols-7 gap-1 text-xs text-gray-600 px-3 py-2">
                     <div class="col-span-3">银行/尾号</div>
                     <div class="col-span-1 text-center">账单日</div>
                     <div class="col-span-2 text-center">还款日</div>
@@ -448,7 +503,7 @@ function getHtml(env) {
             </div>
 
             <!-- 添加按钮 (固定在底部) -->
-            <div id="add-card-btn-container" class="fixed bottom-0 left-0 right-0 max-w-md mx-auto p-4 bg-gray-900 bg-opacity-80 backdrop-blur-sm">
+            <div id="add-card-btn-container" class="fixed bottom-0 left-0 right-0 max-w-md mx-auto p-4 bg-white bg-opacity-90 backdrop-blur-sm">
                 <button id="add-card-btn-main" class="w-full bg-green-600 text-white font-bold py-3 px-4 rounded-lg flex items-center justify-center space-x-2 transition hover:bg-green-700">
                     <i data-lucide="plus-circle" class="w-5 h-5"></i>
                     <span>添加信用卡信息</span>
@@ -464,20 +519,20 @@ function getHtml(env) {
             <header class="flex justify-between items-center mb-6">
                 <h1 class="text-xl font-bold">管理员登录</h1>
                 <button id="login-cancel-button">
-                    <i data-lucide="x" class="w-6 h-6"></i>
+                    <i data-lucide="x" class="w-6 h-6 text-gray-900"></i>
                 </button>
             </header>
             <form id="login-form" class="space-y-4">
                 <div>
-                    <label for="username" class="block text-sm font-medium text-gray-400">用户名</label>
-                    <input type="text" id="username" class="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" required>
+                    <label for="username" class="block text-sm font-medium text-gray-600">用户名</label>
+                    <input type="text" id="username" class="mt-1 w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500" required>
                 </div>
                 <div>
-                    <label for="password" class="block text-sm font-medium text-gray-400">密码</label>
-                    <input type="password" id="password" class="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" required>
+                    <label for="password" class="block text-sm font-medium text-gray-600">密码</label>
+                    <input type="password" id="password" class="mt-1 w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500" required>
                 </div>
                 <div class="flex space-x-4 pt-4">
-                    <button type="button" id="login-form-cancel" class="w-full bg-gray-700 text-white font-bold py-3 px-4 rounded-lg transition hover:bg-gray-600">取消</button>
+                    <button type="button" id="login-form-cancel" class="w-full bg-gray-200 text-gray-900 font-bold py-3 px-4 rounded-lg transition hover:bg-gray-100">取消</button>
                     <button type="submit" class="w-full bg-blue-600 text-white font-bold py-3 px-4 rounded-lg transition hover:bg-blue-700">登录</button>
                 </div>
             </form>
@@ -490,7 +545,7 @@ function getHtml(env) {
             <header class="flex justify-between items-center mb-6">
                 <h1 id="form-title" class="text-xl font-bold">添加信用卡</h1>
                 <button id="form-cancel-button">
-                    <i data-lucide="x" class="w-6 h-6"></i>
+                    <i data-lucide="x" class="w-6 h-6 text-gray-900"></i>
                 </button>
             </header>
             
@@ -499,38 +554,38 @@ function getHtml(env) {
                 
                 <!-- 银行名称 -->
                 <div>
-                    <label for="bank_name" class="block text-sm font-medium text-gray-400">发卡银行</label>
-                    <input type="text" id="bank_name" placeholder="例如：招商银行" maxlength="10" class="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" required>
+                    <label for="bank_name" class="block text-sm font-medium text-gray-600">发卡银行</label>
+                    <input type="text" id="bank_name" placeholder="例如：招商银行" maxlength="10" class="mt-1 w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500" required>
                 </div>
 
                 <!-- 尾号 -->
                 <div>
-                    <label for="last_4_digits" class="block text-sm font-medium text-gray-400">卡号后4位 (0000-9999)</label>
+                    <label for="last_4_digits" class="block text-sm font-medium text-gray-600">卡号后4位 (0000-9999)</label>
                     <!-- 更改为 type="number" 并设置 min/max 限制 -->
-                    <input type="number" id="last_4_digits" placeholder="例如：8888" min="0" max="9999" inputmode="numeric" class="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" required>
+                    <input type="number" id="last_4_digits" placeholder="例如：8888" min="0" max="9999" inputmode="numeric" class="mt-1 w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500" required>
                 </div>
 
                 <!-- 额度 -->
                 <div>
-                    <label for="card_limit" class="block text-sm font-medium text-gray-400">卡片额度 (元)</label>
-                    <input type="number" id="card_limit" placeholder="例如：50000" max="1000000" class="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" required>
+                    <label for="card_limit" class="block text-sm font-medium text-gray-600">卡片额度 (元)</label>
+                    <input type="number" id="card_limit" placeholder="例如：50000" max="1000000" class="mt-1 w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500" required>
                 </div>
 
                 <!-- 账单日 -->
                 <div>
-                    <label for="billing_day" class="block text-sm font-medium text-gray-400">出账日 (每月x日)</label>
-                    <input type="number" id="billing_day" placeholder="1-31" min="1" max="31" class="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" required>
+                    <label for="billing_day" class="block text-sm font-medium text-gray-600">出账日 (每月x日)</label>
+                    <input type="number" id="billing_day" placeholder="1-31" min="1" max="31" class="mt-1 w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500" required>
                 </div>
 
                 <!-- 还款日 -->
                 <div>
-                    <label class="block text-sm font-medium text-gray-400">还款日</label>
+                    <label class="block text-sm font-medium text-gray-600">还款日</label>
                     <div class="mt-1 flex items-center space-x-2">
                         <!-- 模式一: 账单日后xx天 -->
                         <div id="payment-type-days-after" class="flex-1">
                             <div class="flex items-center space-x-2">
                                 <span class="text-nowrap">账单日后</span>
-                                <input type="number" id="payment_value_days" min="1" max="31" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="20">
+                                <input type="number" id="payment_value_days" min="1" max="31" class="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="20">
                                 <span>天</span>
                             </div>
                         </div>
@@ -538,13 +593,13 @@ function getHtml(env) {
                         <div id="payment-type-fixed-day" class="hidden flex-1">
                             <div class="flex items-center space-x-2">
                                 <span class="text-nowrap">每月固定</span>
-                                <input type="number" id="payment_value_fixed" min="1" max="31" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="15">
+                                <input type="number" id="payment_value_fixed" min="1" max="31" class="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="15">
                                 <span>日</span>
                             </div>
                         </div>
                         <!-- 切换按钮 -->
-                        <button type="button" id="payment-type-toggle" class="p-2 bg-gray-700 rounded-lg">
-                            <i data-lucide="repeat-2" class="w-5 h-5"></i>
+                        <button type="button" id="payment-type-toggle" class="p-2 bg-gray-100 rounded-lg">
+                            <i data-lucide="repeat-2" class="w-5 h-5 text-gray-900"></i>
                         </button>
                     </div>
                     <input type="hidden" id="payment_type" value="days_after_billing">
@@ -552,21 +607,21 @@ function getHtml(env) {
                 
                 <!-- 宽限期 -->
                 <div>
-                    <label for="grace_days" class="block text-sm font-medium text-gray-400">宽限期 (天)</label>
-                    <input type="number" id="grace_days" placeholder="例如：3" min="0" max="31" value="0" class="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" required>
+                    <label for="grace_days" class="block text-sm font-medium text-gray-600">宽限期 (天)</label>
+                    <input type="number" id="grace_days" placeholder="例如：3" min="0" max="31" value="0" class="mt-1 w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500" required>
                 </div>
 
                 <!-- 备注 -->
                 <div>
-                    <label for="notes" class="block text-sm font-medium text-gray-400">备注</label>
-                    <textarea id="notes" rows="3" maxlength="100" class="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="可选，最多100字..."></textarea>
+                    <label for="notes" class="block text-sm font-medium text-gray-600">备注</label>
+                    <textarea id="notes" rows="3" maxlength="100" class="mt-1 w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="可选，最多100字..."></textarea>
                 </div>
 
                 <!-- 按钮组 -->
                 <div class="pt-4">
                     <!-- 添加模式按钮 -->
                     <div id="form-buttons-add" class="flex space-x-4">
-                        <button type="button" id="form-add-cancel" class="w-full bg-gray-700 text-white font-bold py-3 px-4 rounded-lg transition hover:bg-gray-600">取消</button>
+                        <button type="button" id="form-add-cancel" class="w-full bg-gray-200 text-gray-900 font-bold py-3 px-4 rounded-lg transition hover:bg-gray-100">取消</button>
                         <button type="submit" class="w-full bg-green-600 text-white font-bold py-3 px-4 rounded-lg transition hover:bg-green-700">确认添加</button>
                     </div>
                     <!-- 编辑模式按钮 -->
@@ -817,18 +872,18 @@ function getHtml(env) {
         function renderCardList(cardsWithDates) {
             list.container.innerHTML = ''; // 清空列表
             if (filteredCards.length === 0) {
-                list.container.innerHTML = '<p class="text-gray-500 text-center py-4">没有找到信用卡。</p>';
+                list.container.innerHTML = '<p class="text-gray-600 text-center py-4">没有找到信用卡。</p>';
                 return;
             }
 
             cardsWithDates.forEach(card => {
                 const row = document.createElement('div');
                 // *** 核心改动: grid-cols-7, 适应新的 3-1-2-1 比例 ***
-                row.className = 'bg-gray-800 p-3 rounded-lg grid grid-cols-7 gap-1 items-center text-xs';
+                row.className = 'bg-gray-50 p-3 rounded-lg grid grid-cols-7 gap-1 items-center text-xs';
                 
                 // 如果已登录，添加点击事件
                 if (adminToken) {
-                    row.classList.add('cursor-pointer', 'transition', 'hover:bg-gray-700');
+                    row.classList.add('cursor-pointer', 'transition', 'hover:bg-gray-100');
                     row.onclick = () => showCardForm('edit', card);
                 }
 
@@ -842,27 +897,27 @@ function getHtml(env) {
                     paymentColor = 'text-yellow-400 font-bold';
                 } else {
                     paymentText = \`剩余 \${daysUntil} 天\`;
-                    paymentColor = 'text-gray-400';
+                    paymentColor = 'text-gray-600';
                 }
 
                 row.innerHTML = \`
                     <!-- 银行/尾号: col-span-3 (原 2/5 -> 3/7) -->
                     <div class="col-span-3">
-                        <div class="font-bold text-sm text-white truncate">\${card.bank_name}</div>
-                        <div class="text-xs text-gray-400">尾号 \${card.last_4_digits}</div>
+                        <div class="font-bold text-sm text-gray-900 truncate">\${card.bank_name}</div>
+                        <div class="text-xs text-gray-600">尾号 \${card.last_4_digits}</div>
                     </div>
                     <!-- 账单日: col-span-1 (原 1/5 -> 1/7) -->
                     <div class="col-span-1 text-center">
-                        <div class="text-white">\${card.billing_day} 日</div>
+                        <div class="text-gray-900">\${card.billing_day} 日</div>
                     </div>
                     <!-- 还款日: col-span-2 (原 1/5 -> 2/7) -->
                     <div class="col-span-2 text-center">
-                        <div class="text-white">\${card.nextPaymentDeadline.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })}</div>
+                        <div class="text-gray-900">\${card.nextPaymentDeadline.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })}</div>
                         <div class="text-xs \${paymentColor}">\${paymentText}</div>
                     </div>
                     <!-- 免息期: col-span-1 (原 1/5 -> 1/7) -->
                     <div class="col-span-1 text-right">
-                        <div class="text-white">\${card.max_grace_period} 天</div>
+                        <div class="text-gray-900">\${card.max_grace_period} 天</div>
                     </div>
                 \`;
                 list.container.appendChild(row);
@@ -918,9 +973,9 @@ function getHtml(env) {
                 } else if (calendarMode === 'paymentDay' && isPayment) {
                     dayEl.classList.add('highlight-payment');
                 } else if (isBilling) {
-                    dayEl.classList.add('opacity-50', 'bg-green-900'); // 弱显示
+                    dayEl.classList.add('opacity-50', 'bg-green-50'); // 弱显示
                 } else if (isPayment) {
-                    dayEl.classList.add('opacity-50', 'bg-red-900'); // 弱显示
+                    dayEl.classList.add('opacity-50', 'bg-red-50'); // 弱显示
                 }
                 
                 calendar.body.appendChild(dayEl);
@@ -941,7 +996,7 @@ function getHtml(env) {
         function toggleCalendarMode() {
             calendarMode = (calendarMode === 'paymentDay') ? 'billingDay' : 'paymentDay';
             renderCalendar(calendarDate);
-            showToast(\`已切换到 \${calendarMode === 'paymentDay' ? '还款日' : '账单日'} 标注模式\`);
+            showToast(\`已切换到 \${calendarMode === 'paymentDay' ? '还款日' : '账单日'} 显示\`);
         }
         
         /**
@@ -951,7 +1006,7 @@ function getHtml(env) {
             currentSort = (currentSort === 'paymentDay') ? 'billingDay' : 'paymentDay';
             list.sortLabel.textContent = (currentSort === 'paymentDay') ? '还款日' : '账单日';
             refreshDashboard();
-            showToast(\`已切换为按 \${currentSort === 'paymentDay' ? '还款日' : '账单日'} 排序\`);
+            showToast(\`已按 \${currentSort === 'paymentDay' ? '还款日' : '账单日'} 排序\`);
         }
         
         /**
@@ -962,7 +1017,7 @@ function getHtml(env) {
             if (!query) {
                 filteredCards = [...allCards];
             } else {
-                const keywords = query.split(/\s+/); // 按空格拆分关键词
+                const keywords = query.split(/\\s+/); // 按空格拆分关键词
                 filteredCards = allCards.filter(card => {
                     const bankName = card.bank_name.toLowerCase();
                     // 必须匹配所有关键词
