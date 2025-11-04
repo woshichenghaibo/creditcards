@@ -345,31 +345,55 @@
 
 
 
-我为您实现了一个单文件 Cloudflare Worker（workers.js），其中包含：
+您好，这个 `D1_ERROR: no such table: credit_cards: SQLITE_ERROR` 错误提示非常明确：
 
-前端（单页应用 HTML/CSS/JS）和后端（API 路由）全部在同一文件；
-D1 表结构创建（cards 表）与初始化：如果当前表为空，会自动插入两条示例信用卡记录（符合您要求的预设数据）；
-管理员登录（使用在 Worker 环境中配置的 ADMIN_USER / ADMIN_PASS 与 SESSION_SECRET）并通过 HttpOnly cookie 保存会话；
-卡片的增删改查 API（/api/cards、/api/cards/:id），并在添加/更新时执行服务端验证；
-计算并展示“最长剩余免息期”和“7天内待还卡片数”，排序可按“还款日/账单日”切换，搜索支持关键词拆分；
-移动端友好的界面（白色背景，表格、日历、表单与校验），日历与“还款日/账单日”绑定切换（日历标注模式与下方切换联动），添加/编辑表单以及后台登录等行为都实现了交互。
-如何在 Cloudflare Dashboard（鼠标操作）上部署并初始化 D1 与环境变量：
+**“没有找到名为 credit\_cards 的表。”**
 
-登录 Cloudflare -> Workers & Pages -> Workers。
-新建一个 Worker，打开编辑器，把上面的 workers.js 内容全部复制粘贴进去。
-创建 D1 数据库（Cloudflare Dashboard -> D1 -> Create Database），请确保数据库名称只包含小写字母、数字、下划线或连字符（例如 cards_db）。
-在 Worker 的 "Settings" -> "Variables" -> "D1 Bindings" 中添加一个 D1 绑定：
-变量名填写：CARDS_DB
-选择刚才创建的 D1 数据库并保存。
-在 Worker 的 "Settings" -> "Variables" -> "Environment Variables" 中新增以下变量：
-ADMIN_USER：管理员用户名（例如 admin）
-ADMIN_PASS：管理员密码（例如 aStrongPass123；生产环境请使用更强密码）
-SESSION_SECRET：一串随机长字符串（用于签名 session cookie），例如使用密码生成器生成 32+ 字符
-点击 Save & Deploy（部署 Worker）。
-第一次访问 Worker（网页任意页面）时脚本会执行：
+这意味着您的 Worker 脚本 (`workers.js`) 已经成功运行并尝试连接 D1 数据库（`env.DB`），但是当它执行 SQL 查询（例如 `SELECT * FROM credit_cards`）时，D1 数据库报告说这个表不存在。
 
-自动创建 cards 表（如果尚未创建）；
-如果表内没有记录，会插入两条示例信用卡记录（您可以登录管理员后自行删除或修改）。
+这通常是因为您虽然创建了 D1 数据库（`credit-card-db`）并将其绑定到了 Worker，但**忘记了执行 SQL 命令来创建表结构和插入初始数据**。
+
+-----
+
+### 如何解决
+
+（创建 D1 数据库并初始化）操作：
+
+1.  在 Cloudflare 仪表板中，转到 **Workers & Pages** -\> **D1**。
+
+2.  点击您创建的数据库（例如 `credit-card-db`）。
+
+3.  转到 **Console**（控制台）选项卡。
+
+4.  **运行 SQL 命令 1 (创建表):**
+    在 SQL 输入框中粘贴以下代码，然后点击 **Execute**（执行）：
+
+    ```sql
+    CREATE TABLE credit_cards (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      bank_name TEXT NOT NULL,
+      last_4_digits TEXT NOT NULL,
+      card_limit INTEGER,
+      billing_day INTEGER NOT NULL,
+      payment_type TEXT NOT NULL, -- 'days_after_billing' 或 'fixed_day'
+      payment_value INTEGER NOT NULL, -- 'days_after_billing'的值 或 'fixed_day'的值
+      grace_days INTEGER DEFAULT 0, -- 宽限期
+      max_grace_period INTEGER NOT NULL, -- 免息期
+      notes TEXT
+    );
+    ```
+
+5.  **运行 SQL 命令 2 (插入初始数据):**
+    等待上一个命令成功后（控制台会显示成功），**清除**输入框中的旧代码，然后粘贴以下代码，再点击 **Execute**（执行）：
+
+    ```sql
+    INSERT INTO credit_cards (bank_name, last_4_digits, card_limit, billing_day, payment_type, payment_value, grace_days, max_grace_period, notes)
+    VALUES
+    ('示例银行A', '1234', 50000, 10, 'days_after_billing', 20, 3, 53, '这是第一张示例卡'),
+    ('示例银行B', '5678', 100000, 15, 'fixed_day', 5, 0, 50, '这是第二张示例卡，每月5日固定还款');
+    ```
+
+完成这 SQL 操作后，您的数据表就创建好了。请您\*\*刷新（重新加载）\*\*一下您的 Worker 网页，程序应该就能正常运行了，因为它现在可以找到 `credit_cards` 表了。
 
 
 
