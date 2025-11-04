@@ -1,762 +1,1327 @@
-/**
- * Cloudflare Worker single-file credit-card manager
- * - Admin auth: HTTP Basic (client stores Basic header in localStorage.basicAuth)
- * - D1 binding name: CARDS_DB (must be set in Worker settings)
- * - Env variables: ADMIN_USER, ADMIN_PASS
- *
- * Changes in this update:
- * - Restored and fixed the "账单日/还款日" sorting button behavior (now a proper button).
- * - Removed the small bank icon from each list row to free horizontal space.
- * - Kept calendar marking, admin auth, and mobile-friendly compact layout.
- *
- * Paste into Worker editor, bind D1 to CARDS_DB and set ADMIN_USER/ADMIN_PASS in Worker env.
- */
+// 这是一个完整的 Cloudflare Worker 脚本
+// 它包含后端 API 逻辑 和 前端 HTML/CSS/JS
 
-const json = (body, status = 200) => new Response(JSON.stringify(body), {
-  status,
-  headers: { "Content-Type": "application/json;charset=UTF-8" }
-});
-const html = (body) => new Response(body, {
-  headers: { "Content-Type": "text/html;charset=UTF-8" }
-});
+// =============================================
+// 后端 API 路由
+// =============================================
 
-/* Basic Auth helper */
-function isValidBasicAuth(authHeader, ADMIN_USER, ADMIN_PASS) {
-  if (!authHeader || typeof authHeader !== 'string') return false;
-  if (!authHeader.startsWith('Basic ')) return false;
-  try {
-    const b64 = authHeader.slice(6).trim();
-    const creds = atob(b64);
-    const idx = creds.indexOf(':');
-    if (idx === -1) return false;
-    const user = creds.slice(0, idx);
-    const pass = creds.slice(idx + 1);
-    return user === ADMIN_USER && pass === ADMIN_PASS;
-  } catch (e) {
-    return false;
-  }
-}
+// 定义一个简单的静态令牌用于管理员认证
+// 在实际生产中，您应该使用更安全的方法（如 JWT），但对于个人项目和“临时登录”的要求，这足够简单
+const ADMIN_TOKEN = "your-secret-admin-token-12345";
 
-/* D1 schema init & seed */
-async function ensureSchemaAndSeed(env) {
-  await env.CARDS_DB.prepare(`
-    CREATE TABLE IF NOT EXISTS cards (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      bank TEXT NOT NULL,
-      last4 TEXT NOT NULL,
-      credit_limit INTEGER DEFAULT 0,
-      billing_day INTEGER NOT NULL,
-      repayment_mode TEXT NOT NULL,
-      repayment_offset INTEGER NOT NULL,
-      grace_period INTEGER DEFAULT 0,
-      notes TEXT DEFAULT '',
-      created_at INTEGER DEFAULT (CAST(strftime('%s','now') AS INTEGER))
-    );
-  `).run();
-
-  const r = await env.CARDS_DB.prepare(`SELECT COUNT(*) AS c FROM cards`).all();
-  const count = (r && r.results && r.results[0] && r.results[0].c) ? r.results[0].c : 0;
-  if (count === 0) {
-    await env.CARDS_DB.prepare(`
-      INSERT INTO cards (bank, last4, credit_limit, billing_day, repayment_mode, repayment_offset, grace_period, notes)
-      VALUES
-      ('招商银行', '8888', 50000, 1, 'fixed', 20, 49, '示例卡 - 招商'),
-      ('工商银行', '1234', 80000, 5, 'after', 25, 55, '示例卡 - 工行');
-    `).run();
-  }
-}
-
-/* Date helpers */
-function daysInMonth(year, month) { return new Date(year, month, 0).getDate(); }
-function clampDay(year, month, day) { const dim = daysInMonth(year, month); return Math.max(1, Math.min(dim, day)); }
-function startOfDay(d) { return new Date(d.getFullYear(), d.getMonth(), d.getDate()); }
-function addDays(d, n) { const x = new Date(d.getTime()); x.setDate(x.getDate() + n); return x; }
-function nextBillingDateFrom(billing_day, fromDate) {
-  const y = fromDate.getFullYear(), m = fromDate.getMonth() + 1;
-  const thisMonthDay = clampDay(y, m, billing_day);
-  let billDate = new Date(y, m - 1, thisMonthDay);
-  if (billDate < startOfDay(fromDate)) {
-    const nextMonth = m === 12 ? 1 : m + 1;
-    const nextYear = m === 12 ? y + 1 : y;
-    billDate = new Date(nextYear, nextMonth - 1, clampDay(nextYear, nextMonth, billing_day));
-  }
-  return billDate;
-}
-function nextRepaymentDate(card, fromDate) {
-  if (card.repayment_mode === 'fixed') {
-    const day = clampDay(fromDate.getFullYear(), fromDate.getMonth() + 1, card.repayment_offset);
-    let repay = new Date(fromDate.getFullYear(), fromDate.getMonth(), day);
-    if (repay < startOfDay(fromDate)) {
-      const nextMonthIndex = fromDate.getMonth() === 11 ? 0 : fromDate.getMonth() + 1;
-      const year = fromDate.getMonth() === 11 ? fromDate.getFullYear() + 1 : fromDate.getFullYear();
-      repay = new Date(year, nextMonthIndex, clampDay(year, nextMonthIndex + 1, card.repayment_offset));
-    }
-    return repay;
-  } else {
-    const billing = nextBillingDateFrom(card.billing_day, fromDate);
-    const repay = addDays(billing, card.repayment_offset);
-    if (repay < startOfDay(fromDate)) {
-      const nextBilling = nextBillingDateFrom(card.billing_day, addDays(fromDate, 31));
-      return addDays(nextBilling, card.repayment_offset);
-    }
-    return repay;
-  }
-}
-function daysUntil(a, b) { const A = startOfDay(a), B = startOfDay(b); return Math.ceil((B - A) / (24*3600*1000)); }
-
-/* Validate payload */
-function validateCardPayload(body) {
-  const errors = [];
-  const bank = body.bank || '';
-  const last4 = String(body.last4 || '');
-  const credit_limit = Number(body.credit_limit || 0);
-  const billing_day = Number(body.billing_day);
-  const repayment_mode = body.repayment_mode;
-  const repayment_offset = Number(body.repayment_offset);
-  const grace_period = Number(body.grace_period || 0);
-
-  if (!bank || typeof bank !== 'string' || Array.from(bank).length === 0 || Array.from(bank).length > 10) errors.push('bank invalid (required, max 10 chars)');
-  if (!/^\d{4}$/.test(last4)) errors.push('last4 must be exactly 4 digits');
-  if (!Number.isFinite(credit_limit) || credit_limit < 0 || credit_limit > 1000000) errors.push('credit_limit invalid: 0..1000000');
-  if (!Number.isInteger(billing_day) || billing_day < 1 || billing_day > 31) errors.push('billing_day must be 1-31');
-  if (!['fixed','after'].includes(repayment_mode)) errors.push('repayment_mode must be "fixed" or "after"');
-  if (!Number.isInteger(repayment_offset) || repayment_offset < 1 || repayment_offset > 31) errors.push('repayment_offset must be 1-31');
-  if (!Number.isInteger(grace_period) || grace_period < 0 || grace_period > 365) errors.push('grace_period invalid');
-
-  return { ok: errors.length === 0, errors };
-}
-
-/* API */
-async function handleApiRequest(req, env) {
-  const u = new URL(req.url);
-  const p = u.pathname;
-
-  await ensureSchemaAndSeed(env);
-
-  // GET list
-  if (p === '/api/cards' && req.method === 'GET') {
-    const q = u.searchParams.get('q') || '';
-    const sortBy = u.searchParams.get('sortBy') || 'repayment';
-
-    const rows = await env.CARDS_DB.prepare(`SELECT * FROM cards`).all();
-    const cards = (rows && rows.results) ? rows.results.map(r => ({
-      id: r.id,
-      bank: r.bank,
-      last4: r.last4,
-      credit_limit: r.credit_limit,
-      billing_day: r.billing_day,
-      repayment_mode: r.repayment_mode,
-      repayment_offset: r.repayment_offset,
-      grace_period: r.grace_period,
-      notes: r.notes,
-      created_at: r.created_at
-    })) : [];
-
-    const now = new Date();
-    const enriched = cards.map(c => {
-      const nextBilling = nextBillingDateFrom(c.billing_day, now);
-      const nextRepay = nextRepaymentDate(c, now);
-      const daysToRepay = daysUntil(now, nextRepay);
-      return { ...c, nextBilling: nextBilling.toISOString(), nextRepay: nextRepay.toISOString(), daysToRepay };
-    });
-
-    const tokens = q.trim().split(/\s+/).filter(Boolean).map(t => t.toLowerCase());
-    let filtered = enriched;
-    if (tokens.length) {
-      filtered = enriched.filter(c => {
-        const hay = (c.bank + ' ' + c.last4).toLowerCase();
-        return tokens.every(t => hay.includes(t));
-      });
-    }
-
-    const longest = filtered.reduce((acc, c) => Math.max(acc, c.daysToRepay), 0);
-    const dueIn7 = filtered.filter(c => c.daysToRepay > 0 && c.daysToRepay <= 7).length;
-
-    if (sortBy === 'billing') {
-      // Sort by billing_day ascending (日期越小越靠前)
-      filtered.sort((a, b) => a.billing_day - b.billing_day);
-    } else {
-      // repayment sort by nextRepay date ascending
-      filtered.sort((a, b) => new Date(a.nextRepay) - new Date(b.nextRepay));
-    }
-
-    return json({ cards: filtered, longestRemaining: longest, dueIn7 });
-  }
-
-  // POST create (admin)
-  if (p === '/api/cards' && req.method === 'POST') {
-    const authHeader = req.headers.get('Authorization') || '';
-    if (!isValidBasicAuth(authHeader, env.ADMIN_USER, env.ADMIN_PASS)) {
-      return new Response('Unauthorized', { status: 401, headers: { 'WWW-Authenticate': 'Basic realm="Admin"' } });
-    }
-    const body = await req.json();
-    const valid = validateCardPayload(body);
-    if (!valid.ok) return json({ error: 'validation', details: valid.errors }, 400);
-    const stmt = `INSERT INTO cards (bank,last4,credit_limit,billing_day,repayment_mode,repayment_offset,grace_period,notes) VALUES (?,?,?,?,?,?,?,?)`;
-    const res = await env.CARDS_DB.prepare(stmt).bind(body.bank, body.last4, body.credit_limit || 0, body.billing_day, body.repayment_mode, body.repayment_offset, body.grace_period || 0, body.notes || '').run();
-    return json({ ok: true, lastInsertId: res && res.lastInsertRowId ? res.lastInsertRowId : null });
-  }
-
-  // GET / PUT / DELETE by id
-  if (p.startsWith('/api/cards/') && ['GET','PUT','DELETE'].includes(req.method)) {
-    const id = Number(p.split('/').pop());
-    if (Number.isNaN(id)) return json({ error: 'bad_id' }, 400);
-
-    if (req.method === 'GET') {
-      const row = await env.CARDS_DB.prepare(`SELECT * FROM cards WHERE id = ?`).bind(id).all();
-      if (!row || !row.results || row.results.length === 0) return json({ error: 'not_found' }, 404);
-      return json({ card: row.results[0] });
-    }
-
-    const authHeader = req.headers.get('Authorization') || '';
-    if (!isValidBasicAuth(authHeader, env.ADMIN_USER, env.ADMIN_PASS)) {
-      return new Response('Unauthorized', { status: 401, headers: { 'WWW-Authenticate': 'Basic realm="Admin"' } });
-    }
-
-    if (req.method === 'PUT') {
-      const body = await req.json();
-      const valid = validateCardPayload(body);
-      if (!valid.ok) return json({ error: 'validation', details: valid.errors }, 400);
-      await env.CARDS_DB.prepare(`
-        UPDATE cards SET bank=?, last4=?, credit_limit=?, billing_day=?, repayment_mode=?, repayment_offset=?, grace_period=?, notes=?
-        WHERE id=?
-      `).bind(body.bank, body.last4, body.credit_limit || 0, body.billing_day, body.repayment_mode, body.repayment_offset, body.grace_period || 0, body.notes || '', id).run();
-      return json({ ok: true });
-    }
-
-    if (req.method === 'DELETE') {
-      await env.CARDS_DB.prepare(`DELETE FROM cards WHERE id = ?`).bind(id).run();
-      return json({ ok: true });
-    }
-  }
-
-  // POST /api/login - validate credentials and return ok (client stores Basic header)
-  if (p === '/api/login' && req.method === 'POST') {
-    const body = await req.json();
-    const user = String(body.username || '');
-    const pass = String(body.password || '');
-    if (!env.ADMIN_USER || !env.ADMIN_PASS) return json({ error: 'server_misconfigured' }, 500);
-    if (user === env.ADMIN_USER && pass === env.ADMIN_PASS) {
-      return json({ ok: true, message: 'credentials_valid' });
-    } else {
-      return new Response('Unauthorized', { status: 401, headers: { 'WWW-Authenticate': 'Basic realm="Admin"' } });
-    }
-  }
-
-  // GET /api/check_auth - check Authorization header (Basic)
-  if (p === '/api/check_auth' && req.method === 'GET') {
-    const authHeader = req.headers.get('Authorization') || '';
-    if (!isValidBasicAuth(authHeader, env.ADMIN_USER, env.ADMIN_PASS)) {
-      return json({ authenticated: false });
-    }
-    return json({ authenticated: true, username: env.ADMIN_USER });
-  }
-
-  return json({ error: 'not_found' }, 404);
-}
-
-/* Frontend SPA */
-function renderApp() {
-  return `<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>信用卡管理</title>
-<style>
-  :root{--bg:#ffffff;--accent:#14a44d;--muted:#6b7280;--card:#f7faf7}
-  html,body{height:100%;margin:0;background:var(--bg);font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;color:#111}
-  .wrap{max-width:760px;margin:0 auto;padding:10px}
-  header{display:flex;align-items:center;justify-content:space-between;gap:8px}
-  .title{font-size:18px;font-weight:700}
-  .admin-wrap{display:flex;align-items:center;gap:8px;cursor:pointer}
-  .admin-icon{width:34px;height:34px;border-radius:8px;background:#f3f4f6;display:flex;align-items:center;justify-content:center;font-size:18px}
-  .admin-name{font-size:13px;color:#333;max-width:110px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .stats{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
-  .stat{flex:1 1 28%;min-width:100px;background:var(--card);padding:10px;border-radius:10px;display:flex;flex-direction:column;align-items:flex-start;justify-content:center;box-shadow:0 1px 3px rgba(0,0,0,0.04)}
-  .stat .label{font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px}
-  .stat .value{font-weight:700;font-size:16px;margin-top:6px}
-  .search{margin-top:10px}
-  .search input{width:100%;padding:10px;border-radius:10px;border:1px solid #e6e6e6;font-size:14px}
-  .calendar{margin-top:10px;padding:8px;border-radius:8px;border:1px solid #eee}
-  .cal-header{display:flex;align-items:center;justify-content:space-between}
-  .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-top:8px}
-  .cal-day{padding:8px;border-radius:6px;text-align:center;font-size:13px;min-height:36px;display:flex;align-items:center;justify-content:center}
-  .cal-day.mark-repay{background:#fff0f0;color:#c41d1d;font-weight:700;border:1px solid rgba(196,29,29,0.08)}
-  .cal-day.mark-billing{background:#f0fff0;color:#0b9a3b;font-weight:700;border:1px solid rgba(11,154,59,0.08)}
-  .section-title{display:flex;align-items:center;justify-content:space-between;margin-top:10px}
-  table{width:100%;border-collapse:collapse;margin-top:8px;font-size:14px;table-layout:fixed}
-  thead th{font-size:12px;color:var(--muted);text-align:left;padding:8px;border-bottom:1px solid #eee}
-  tbody td{padding:10px;border-bottom:1px solid #f5f5f5;vertical-align:top;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  colgroup col:nth-child(1){width:44%}
-  colgroup col:nth-child(2){width:26%}
-  colgroup col:nth-child(3){width:18%}
-  colgroup col:nth-child(4){width:12%}
-  .bank-name{display:inline-flex;align-items:center;gap:8px;max-width:100%;overflow:hidden}
-  .repay-small{font-weight:600}
-  .add-btn{margin-top:12px;background:var(--accent);color:#fff;padding:10px;border-radius:8px;text-align:center;cursor:pointer;font-weight:700}
-  .modal{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,0.35);z-index:50}
-  .modal.open{display:flex}
-  .panel{background:#fff;padding:14px;border-radius:12px;max-width:520px;width:94%;max-height:90vh;overflow:auto;box-shadow:0 10px 30px rgba(0,0,0,0.12)}
-  .login-box{display:flex;flex-direction:column;align-items:center;gap:12px;padding:8px}
-  .avatar{width:84px;height:84px;border-radius:12px;background:linear-gradient(135deg,#eef2ff,#fff);display:flex;align-items:center;justify-content:center;border:1px solid #eee}
-  .login-form{width:100%;display:flex;flex-direction:column;gap:10px}
-  .login-form input{width:100%;padding:10px;border-radius:8px;border:1px solid #e6e6e6}
-  .login-note{font-size:13px;color:#666;text-align:center}
-  .form-row{display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid #f3f3f3}
-  .form-row label{flex:1;font-size:14px}
-  input[type="text"],input[type="number"],textarea,select{flex:2;padding:8px;border-radius:6px;border:1px solid #e6e6e6;font-size:14px}
-  .btn{padding:8px 10px;border-radius:8px;border:none;cursor:pointer}
-  .btn.primary{background:var(--accent);color:#fff}
-  .btn.ghost{background:#fff;border:1px solid #ddd}
-  .small-muted{color:#888;font-size:12px}
-  .legend{font-size:12px;color:#666;margin-left:8px}
-  @media (max-width:420px){
-    colgroup col:nth-child(1){width:48%}
-    colgroup col:nth-child(2){width:26%}
-    colgroup col:nth-child(3){width:14%}
-    colgroup col:nth-child(4){width:12%}
-  }
-</style>
-</head><body>
-<div class="wrap">
-  <header>
-    <div class="title">我的信用卡概览</div>
-    <div id="adminWrap" class="admin-wrap" title="管理员">
-      <div id="adminIcon" class="admin-icon">🔒</div>
-      <div id="adminName" class="admin-name"></div>
-    </div>
-  </header>
-
-  <div class="stats">
-    <div class="stat">
-      <div class="label">🔔 7天内到期还款卡片数</div>
-      <div class="value" id="dueIn7">0</div>
-    </div>
-    <div class="stat">
-      <div class="label">💳 卡片总数</div>
-      <div class="value" id="cardCount">0 张</div>
-    </div>
-    <div class="stat">
-      <div class="label">⏳ 最长剩余免息期</div>
-      <div class="value" id="longest">0 天</div>
-    </div>
-  </div>
-
-  <div class="search"><input id="searchInput" placeholder="🔎 搜索银行名称或尾号" /></div>
-
-  <div class="calendar" id="calendar">
-    <div class="cal-header">
-      <div>
-        <button id="prevMonth" class="btn">◀</button>
-        <span id="monthTitle" class="small-muted">2025 年 11 月</span>
-        <button id="nextMonth" class="btn">▶</button>
-      </div>
-      <div style="display:flex;align-items:center;gap:10px">
-        <div class="legend">绿色-账单日&nbsp;&nbsp;红色-还款日</div>
-      </div>
-    </div>
-    <div id="calGrid" class="cal-grid" style="margin-top:8px"></div>
-  </div>
-
-  <div class="section-title">
-    <h3 style="margin:0">信用卡列表</h3>
-    <div style="display:flex;gap:8px;align-items:center">
-      <button id="sortToggle" class="btn small-muted" style="border-radius:16px;padding:6px 10px">还款日 ⌄</button>
-    </div>
-  </div>
-
-  <table>
-    <colgroup>
-      <col/>
-      <col/>
-      <col/>
-      <col/>
-    </colgroup>
-    <thead><tr><th>银行/尾号</th><th>还款日</th><th>账单日</th><th>免息期</th></tr></thead>
-    <tbody id="cardsBody"></tbody>
-  </table>
-
-  <div id="addCardBtn" class="add-btn">➕ + 添加信用卡信息</div>
-</div>
-
-<!-- Modal -->
-<div id="modal" class="modal"><div class="panel">
-  <div style="display:flex;justify-content:space-between;align-items:center">
-    <h3 id="modalTitle">添加信用卡</h3>
-    <button id="closeModal" class="btn">关闭</button>
-  </div>
-
-  <div id="formArea">
-    <div class="form-row"><label>卡号后4位</label><input id="f_last4" maxlength="4" /></div>
-    <div class="form-row"><label>发卡银行</label><input id="f_bank" /></div>
-    <div class="form-row"><label>卡片额度 (元)</label><input id="f_limit" type="number" min="0" max="1000000" /></div>
-    <div class="form-row"><label>出账日</label><input id="f_billing" type="number" min="1" max="31" /></div>
-    <div class="form-row"><label>还款日</label>
-      <div style="display:flex;gap:8px">
-        <select id="f_repay_mode"><option value="after">账后 xx 天</option><option value="fixed">每月固定 xx 日</option></select>
-        <input id="f_repay_offset" type="number" min="1" max="31" style="width:90px"/>
-      </div>
-    </div>
-    <div class="form-row"><label>宽限期 (天)</label><input id="f_grace" type="number" min="0" max="365" /></div>
-    <div class="form-row" style="align-items:flex-start"><label>备注 (不超过100字)</label><textarea id="f_notes" maxlength="100" style="height:80px"></textarea></div>
-
-    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
-      <button id="btnCancel" class="btn ghost">取消</button>
-      <button id="btnSave" class="btn primary">保存</button>
-      <button id="btnUpdate" class="btn primary" style="display:none">更新</button>
-      <button id="btnDelete" class="btn" style="background:#e04b4b;color:#fff;display:none">删除</button>
-    </div>
-    <div id="formMsg" class="small-muted" style="margin-top:8px"></div>
-  </div>
-
-  <div id="loginArea" style="display:none;margin-top:12px">
-    <div class="login-box">
-      <div class="avatar" aria-hidden="true">
-        <svg width="44" height="44" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><rect rx="6" width="24" height="24" fill="#fff"/><path d="M12 12a3 3 0 100-6 3 3 0 000 6z" fill="#c7d2fe"/><path d="M4 20a8 8 0 0116 0" fill="#eef2ff"/></svg>
-      </div>
-      <div class="login-form">
-        <input id="loginUser" placeholder="管理员用户名" />
-        <input id="loginPass" type="password" placeholder="管理员密码" />
-        <div style="display:flex;gap:8px;justify-content:flex-end">
-          <button id="loginCancel" class="btn ghost">取消</button>
-          <button id="loginBtn" class="btn primary">登录</button>
-        </div>
-        <div id="loginMsg" class="login-note"></div>
-      </div>
-      <div class="login-note">使用管理员账号登录以添加或管理信用卡信息</div>
-    </div>
-  </div>
-
-</div></div>
-
-<script>
-(function(){
-  const API = '/api';
-  let cards = [];
-  let mode = 'repayment';            // sorting mode: 'repayment' or 'billing'
-  let calMarkMode = 'repayment';     // calendar marking: 'repayment' (red) or 'billing' (green)
-  let currentMonth = new Date(); currentMonth.setDate(1);
-
-  const el = {
-    adminWrap: document.getElementById('adminWrap'),
-    adminIcon: document.getElementById('adminIcon'),
-    adminName: document.getElementById('adminName'),
-    searchInput: document.getElementById('searchInput'),
-    cardsBody: document.getElementById('cardsBody'),
-    cardCount: document.getElementById('cardCount'),
-    longest: document.getElementById('longest'),
-    dueIn7: document.getElementById('dueIn7'),
-    addCardBtn: document.getElementById('addCardBtn'),
-    modal: document.getElementById('modal'),
-    modalTitle: document.getElementById('modalTitle'),
-    closeModal: document.getElementById('closeModal'),
-    f_last4: document.getElementById('f_last4'),
-    f_bank: document.getElementById('f_bank'),
-    f_limit: document.getElementById('f_limit'),
-    f_billing: document.getElementById('f_billing'),
-    f_repay_mode: document.getElementById('f_repay_mode'),
-    f_repay_offset: document.getElementById('f_repay_offset'),
-    f_grace: document.getElementById('f_grace'),
-    f_notes: document.getElementById('f_notes'),
-    btnSave: document.getElementById('btnSave'),
-    btnCancel: document.getElementById('btnCancel'),
-    btnUpdate: document.getElementById('btnUpdate'),
-    btnDelete: document.getElementById('btnDelete'),
-    formMsg: document.getElementById('formMsg'),
-    loginArea: document.getElementById('loginArea'),
-    loginUser: document.getElementById('loginUser'),
-    loginPass: document.getElementById('loginPass'),
-    loginBtn: document.getElementById('loginBtn'),
-    loginCancel: document.getElementById('loginCancel'),
-    loginMsg: document.getElementById('loginMsg'),
-    prevMonth: document.getElementById('prevMonth'),
-    nextMonth: document.getElementById('nextMonth'),
-    monthTitle: document.getElementById('monthTitle'),
-    calGrid: document.getElementById('calGrid'),
-    sortToggle: document.getElementById('sortToggle')
-  };
-
-  let editingId = null;
-  let isAdmin = false;
-  let adminName = '';
-
-  function getStoredAuth() { return localStorage.getItem('basicAuth') || ''; }
-  function setStoredAuth(basic) { if (basic) localStorage.setItem('basicAuth', basic); else localStorage.removeItem('basicAuth'); }
-
-  function apiFetch(path, opts = {}) {
-    opts.headers = opts.headers || {};
-    const basic = getStoredAuth();
-    if (basic) opts.headers['Authorization'] = basic;
-    opts.credentials = 'include';
-    return fetch(path, opts);
-  }
-
-  async function fetchCards() {
-    const q = encodeURIComponent(el.searchInput.value || '');
-    const res = await apiFetch(\`\${API}/cards?q=\${q}&sortBy=\${mode==='repayment'?'repayment':'billing'}\`);
-    if (!res.ok) return;
-    const data = await res.json();
-    cards = data.cards || [];
-    el.cardCount.textContent = (cards.length || 0) + ' 张';
-    el.longest.textContent = (data.longestRemaining || 0) + ' 天';
-    el.dueIn7.textContent = (data.dueIn7 || 0);
-    renderCards();
-    renderCalendar();
-  }
-
-  function renderCards(){
-    el.cardsBody.innerHTML = '';
-    cards.forEach(c => {
-      const tr = document.createElement('tr');
-
-      // Bank cell - no icon to save space
-      const bankCell = document.createElement('td');
-      bankCell.innerHTML = '<div style="min-width:0"><div style="font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(c.bank) + '</div><div class="small-muted" style="font-size:12px">尾号 ' + escapeHtml(c.last4) + '</div></div>';
-
-      // Repayment cell - compact ("账后" instead of "账单后")
-      const repayCell = document.createElement('td');
-      const repModeText = c.repayment_mode === 'fixed' ? (c.repayment_offset + ' 日') : ('账后 ' + c.repayment_offset + ' 天');
-      repayCell.innerHTML = '<div class="repay-small">🔁 ' + repModeText + '</div><div class="small-muted">剩余: ' + c.daysToRepay + ' 天</div>';
-
-      // Billing cell - only the day number
-      const billingCell = document.createElement('td');
-      billingCell.textContent = c.billing_day + ' 日';
-
-      // Grace
-      const graceCell = document.createElement('td');
-      graceCell.textContent = (c.grace_period || 0) + ' 天';
-
-      tr.appendChild(bankCell); tr.appendChild(repayCell); tr.appendChild(billingCell); tr.appendChild(graceCell);
-      if (isAdmin) { tr.classList.add('clickable'); tr.addEventListener('click', () => openEdit(c.id)); }
-      el.cardsBody.appendChild(tr);
-    });
-  }
-
-  function renderCalendar(){
-    const year = currentMonth.getFullYear(), month = currentMonth.getMonth();
-    el.monthTitle.textContent = year + ' 年 ' + (month + 1) + ' 月';
-    const firstWeekday = new Date(year, month, 1).getDay();
-    const days = new Date(year, month + 1, 0).getDate();
-    const marks = {};
-    cards.forEach(c => {
-      const billingDay = c.billing_day;
-      const repMode = c.repayment_mode;
-      const repOffset = c.repayment_offset;
-      const billingDayClamped = Math.min(billingDay, new Date(year, month + 1, 0).getDate());
-      const billingDate = new Date(year, month, billingDayClamped);
-      let repaymentDate;
-      if (repMode === 'fixed') {
-        repaymentDate = new Date(year, month, Math.min(repOffset, new Date(year, month + 1, 0).getDate()));
-      } else {
-        repaymentDate = new Date(billingDate.getTime()); repaymentDate.setDate(repaymentDate.getDate() + repOffset);
-      }
-      if (billingDate.getMonth() === month) { marks[billingDate.getDate()] = marks[billingDate.getDate()] || {}; marks[billingDate.getDate()].billing = true; }
-      if (repaymentDate.getMonth() === month) { marks[repaymentDate.getDate()] = marks[repaymentDate.getDate()] || {}; marks[repaymentDate.getDate()].repayment = true; }
-    });
-
-    el.calGrid.innerHTML = '';
-    for (let i=0;i<firstWeekday;i++){ const d=document.createElement('div'); d.className='cal-day'; el.calGrid.appendChild(d); }
-    for (let d=1; d<=days; d++){
-      const div = document.createElement('div'); div.className='cal-day'; div.textContent = d;
-      const mark = marks[d];
-      if (mark) {
-        if (calMarkMode === 'repayment' && mark.repayment) div.classList.add('mark-repay');
-        if (calMarkMode === 'billing' && mark.billing) div.classList.add('mark-billing');
-      }
-      el.calGrid.appendChild(div);
-    }
-  }
-
-  el.prevMonth.addEventListener('click', ()=>{ currentMonth.setMonth(currentMonth.getMonth()-1); renderCalendar(); });
-  el.nextMonth.addEventListener('click', ()=>{ currentMonth.setMonth(currentMonth.getMonth()+1); renderCalendar(); });
-
-  // calendar click toggles marking only
-  el.calGrid.addEventListener('click', ()=>{ calMarkMode = calMarkMode === 'repayment' ? 'billing' : 'repayment'; renderCalendar(); });
-
-  // sorting button - restored and functional
-  el.sortToggle.addEventListener('click', ()=>{ 
-    mode = mode === 'repayment' ? 'billing' : 'repayment'; 
-    el.sortToggle.textContent = (mode === 'repayment' ? '还款日 ⌄' : '账单日 ⌄'); 
-    fetchCards(); 
-  });
-
-  el.searchInput.addEventListener('input', debounce(()=>fetchCards(), 300));
-
-  // Admin icon: if logged in, click logs out; else open login
-  el.adminWrap.addEventListener('click', async () => {
-    if (isAdmin) {
-      setStoredAuth('');
-      isAdmin = false; adminName = '';
-      setAdminUI('');
-      await fetchCards();
-      return;
-    }
-    const chk = await apiFetch(API + '/check_auth', { method: 'GET' }).then(r => r.json()).catch(()=>({authenticated:false}));
-    if (chk && chk.authenticated) {
-      isAdmin = true; adminName = chk.username; setAdminUI(adminName);
-      openModal('管理信用卡'); showFormAsEdit(false);
-    } else {
-      openModal('管理员登录', true);
-    }
-  });
-
-  el.addCardBtn.addEventListener('click', async () => {
-    const chk = await apiFetch(API + '/check_auth', { method: 'GET' }).then(r=>r.json()).catch(()=>({authenticated:false}));
-    if (!chk || !chk.authenticated) { openModal('管理员登录', true); return; }
-    isAdmin = true; adminName = chk.username; setAdminUI(adminName);
-    openModal('添加信用卡'); showFormAsEdit(false);
-  });
-
-  function openModal(title, showLogin=false) {
-    el.modal.classList.add('open'); el.modalTitle.textContent = title;
-    if (showLogin) { el.loginArea.style.display = 'block'; document.getElementById('formArea').style.display = 'none'; }
-    else { el.loginArea.style.display = 'none'; document.getElementById('formArea').style.display = 'block'; }
-  }
-  function closeModal(){ el.modal.classList.remove('open'); el.loginArea.style.display='none'; document.getElementById('formArea').style.display='block'; el.formMsg.textContent=''; el.loginMsg.textContent=''; editingId = null; }
-  el.closeModal.addEventListener('click', closeModal);
-  el.btnCancel.addEventListener('click', closeModal);
-  el.loginCancel.addEventListener('click', closeModal);
-
-  // login
-  el.loginBtn.addEventListener('click', async () => {
-    const user = el.loginUser.value.trim(), pass = el.loginPass.value;
-    if (!user || !pass) { el.loginMsg.textContent = '请输入用户名和密码'; return; }
-    try {
-      const res = await fetch(API + '/login', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ username: user, password: pass }) });
-      if (res.ok) {
-        const basic = 'Basic ' + btoa(user + ':' + pass);
-        setStoredAuth(basic);
-        const chk = await apiFetch(API + '/check_auth', { method: 'GET' }).then(r => r.json()).catch(()=>({authenticated:false}));
-        if (chk && chk.authenticated) {
-          isAdmin = true; adminName = chk.username; setAdminUI(adminName);
-          el.loginMsg.textContent = '登录成功';
-          document.getElementById('formArea').style.display = 'block';
-          el.loginArea.style.display = 'none';
-          el.modalTitle.textContent = '添加信用卡';
-          showFormAsEdit(false);
-          await fetchCards();
-        } else {
-          el.loginMsg.textContent = '登录验证通过但服务器无法确认权限';
-          setStoredAuth('');
-        }
-      } else {
-        if (res.status === 401) el.loginMsg.textContent = '用户名或密码错误';
-        else el.loginMsg.textContent = '登录失败';
-      }
-    } catch (e) {
-      el.loginMsg.textContent = '登录请求失败';
-    }
-  });
-
-  function setAdminUI(name) {
-    el.adminIcon.textContent = isAdmin ? '👤' : '🔒';
-    el.adminName.textContent = name || '';
-    el.adminWrap.title = name ? ('管理员: ' + name) : '管理员';
-  }
-
-  async function openEdit(id) {
-    const res = await apiFetch(API + '/cards/' + id, { method: 'GET' });
-    if (!res.ok) { alert('读取卡片信息失败'); return; }
-    const data = await res.json();
-    const c = data.card;
-    editingId = id;
-    el.f_last4.value = c.last4 || '';
-    el.f_bank.value = c.bank || '';
-    el.f_limit.value = c.credit_limit || '';
-    el.f_billing.value = c.billing_day || '';
-    el.f_repay_mode.value = c.repayment_mode || 'after';
-    el.f_repay_offset.value = c.repayment_offset || '';
-    el.f_grace.value = c.grace_period || '';
-    el.f_notes.value = c.notes || '';
-    openModal('管理信用卡'); showFormAsEdit(true);
-  }
-
-  function showFormAsEdit(editMode) {
-    if (editMode) {
-      el.btnSave.style.display = 'none'; el.btnUpdate.style.display = 'inline-block'; el.btnDelete.style.display = 'inline-block';
-    } else {
-      el.btnSave.style.display = 'inline-block'; el.btnUpdate.style.display = 'none'; el.btnDelete.style.display = 'none';
-      el.f_last4.value=''; el.f_bank.value=''; el.f_limit.value=''; el.f_billing.value=''; el.f_repay_mode.value='after'; el.f_repay_offset.value=''; el.f_grace.value=''; el.f_notes.value='';
-    }
-  }
-
-  el.btnSave.addEventListener('click', async () => {
-    const payload = collectForm();
-    const ok = validateFormClient(payload);
-    if (!ok.ok) { el.formMsg.textContent = ok.msg; return; }
-    const res = await apiFetch(API + '/cards', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) });
-    const data = await res.json();
-    if (res.ok && data.ok) { el.formMsg.textContent = '添加成功'; await fetchCards(); setTimeout(()=>closeModal(),700); }
-    else { el.formMsg.textContent = data.error || '添加失败'; }
-  });
-
-  el.btnUpdate.addEventListener('click', async () => {
-    if (!editingId) return;
-    const payload = collectForm(); const ok = validateFormClient(payload);
-    if (!ok.ok) { el.formMsg.textContent = ok.msg; return; }
-    const res = await apiFetch(API + '/cards/' + editingId, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) });
-    const data = await res.json();
-    if (res.ok && data.ok) { el.formMsg.textContent = '更新成功'; await fetchCards(); setTimeout(()=>closeModal(),700); }
-    else el.formMsg.textContent = data.error || '更新失败';
-  });
-
-  el.btnDelete.addEventListener('click', async () => {
-    if (!editingId) return;
-    if (!confirm('确认删除此信用卡信息？')) return;
-    const res = await apiFetch(API + '/cards/' + editingId, { method: 'DELETE' });
-    const data = await res.json();
-    if (res.ok && data.ok) { el.formMsg.textContent = '已删除'; await fetchCards(); setTimeout(()=>closeModal(),700); }
-    else el.formMsg.textContent = data.error || '删除失败';
-  });
-
-  function collectForm() {
-    return {
-      bank: el.f_bank.value.trim(),
-      last4: el.f_last4.value.trim(),
-      credit_limit: Number(el.f_limit.value || 0),
-      billing_day: Number(el.f_billing.value || 0),
-      repayment_mode: el.f_repay_mode.value,
-      repayment_offset: Number(el.f_repay_offset.value || 0),
-      grace_period: Number(el.f_grace.value || 0),
-      notes: el.f_notes.value.trim()
-    };
-  }
-
-  function validateFormClient(payload) {
-    if (!payload.bank || payload.bank.length === 0 || payload.bank.length > 10) return { ok:false, msg: '发卡银行不能为空且不超过10个字' };
-    if (!/^[0-9]{4}$/.test(payload.last4)) return { ok:false, msg: '卡号后4位必须为4位数字' };
-    if (!Number.isInteger(payload.billing_day) || payload.billing_day < 1 || payload.billing_day > 31) return { ok:false, msg: '出账日必须为1-31之间' };
-    if (!['fixed','after'].includes(payload.repayment_mode)) return { ok:false, msg: '还款类型错误' };
-    if (!Number.isInteger(payload.repayment_offset) || payload.repayment_offset < 1 || payload.repayment_offset > 31) return { ok:false, msg: '还款日或偏移必须为1-31之间' };
-    if (!Number.isInteger(payload.grace_period) || payload.grace_period < 0 || payload.grace_period > 365) return { ok:false, msg: '宽限期格式错误' };
-    if (!Number.isInteger(payload.credit_limit) || payload.credit_limit < 0 || payload.credit_limit > 1000000) return { ok:false, msg: '额度必须为0-1000000之间的数字' };
-    if (payload.notes && payload.notes.length > 100) return { ok:false, msg: '备注不能超过100字' };
-    return { ok:true };
-  }
-
-  (async function init(){
-    await fetchCards();
-    const chk = await apiFetch(API + '/check_auth', { method: 'GET' }).then(r => r.json()).catch(()=>({authenticated:false}));
-    if (chk && chk.authenticated) { isAdmin = true; adminName = chk.username; setAdminUI(adminName); }
-  })();
-
-  function escapeHtml(s){ return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
-  function debounce(fn, ms){ let t; return (...a) => { clearTimeout(t); t = setTimeout(()=>fn.apply(null,a), ms); }; }
-
-})();
-</script>
-</body></html>`;
-}
-
-/* Main fetch entry */
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
-    if (url.pathname.startsWith('/api/')) {
-      try {
-        return await handleApiRequest(request, env);
-      } catch (e) {
-        return json({ error: 'server_error', message: String(e) }, 500);
+
+    try {
+      // 1. 路由：提供前端页面
+      if (url.pathname === '/' && request.method === 'GET') {
+        return new Response(getHtml(env), {
+          headers: { 'Content-Type': 'text/html;charset=utf-8' },
+        });
       }
+
+      // 2. 路由：API - 管理员登录
+      if (url.pathname === '/api/login' && request.method === 'POST') {
+        return handleLogin(request, env);
+      }
+
+      // 3. 路由：API - 获取所有信用卡
+      if (url.pathname === '/api/cards' && request.method === 'GET') {
+        return getCards(request, env);
+      }
+
+      // 4. 路由：API - 添加新信用卡 (受保护)
+      if (url.pathname === '/api/cards' && request.method === 'POST') {
+        if (!checkAuth(request)) return new Response('Unauthorized', { status: 401 });
+        return addCard(request, env);
+      }
+
+      // 匹配 /api/cards/:id
+      const cardMatch = url.pathname.match(/^\/api\/cards\/(\d+)$/);
+
+      // 5. 路由：API - 更新信用卡 (受保护)
+      if (cardMatch && request.method === 'PUT') {
+        if (!checkAuth(request)) return new Response('Unauthorized', { status: 401 });
+        const id = cardMatch[1];
+        return updateCard(request, env, id);
+      }
+
+      // 6. 路由：API - 删除信用卡 (受保护)
+      if (cardMatch && request.method === 'DELETE') {
+        if (!checkAuth(request)) return new Response('Unauthorized', { status: 401 });
+        const id = cardMatch[1];
+        return deleteCard(request, env, id);
+      }
+
+      // 默认 404
+      return new Response('Not Found', { status: 404 });
+
+    } catch (e) {
+      console.error(e);
+      return new Response(e.message, { status: 500 });
     }
-    try { await ensureSchemaAndSeed(env); } catch (e) { console.error(e); }
-    return html(renderApp());
-  }
+  },
 };
+
+// =============================================
+// API 处理器
+// =============================================
+
+/**
+ * 检查管理员认证
+ */
+function checkAuth(request) {
+  const authHeader = request.headers.get('Authorization');
+  return authHeader === `Bearer ${ADMIN_TOKEN}`;
+}
+
+/**
+ * 处理管理员登录
+ */
+async function handleLogin(request, env) {
+  try {
+    const { username, password } = await request.json();
+    
+    // 从环境变量中获取用户名和密码
+    const envUser = env.USERNAME;
+    const envPass = env.PASSWORD;
+
+    if (username === envUser && password === envPass) {
+      // 登录成功
+      return Response.json({
+        success: true,
+        token: ADMIN_TOKEN, // 发送回客户端
+        username: envUser,
+      });
+    } else {
+      // 登录失败
+      return Response.json({ success: false, message: '用户名或密码错误' }, { status: 401 });
+    }
+  } catch (e) {
+    return Response.json({ success: false, message: e.message }, { status: 400 });
+  }
+}
+
+/**
+ * API: 获取所有信用卡
+ */
+async function getCards(request, env) {
+  try {
+    const { results } = await env.DB.prepare(
+      'SELECT * FROM credit_cards'
+    ).all();
+    return Response.json({ success: true, cards: results });
+  } catch (e) {
+    return Response.json({ success: false, message: e.message }, { status: 500 });
+  }
+}
+
+/**
+ * API: 添加新信用卡
+ */
+async function addCard(request, env) {
+  try {
+    const card = await request.json();
+    
+    // 后端验证: 银行名称
+    if (!card.bank_name) {
+      return Response.json({ success: false, message: '发卡银行不能为空' }, { status: 400 });
+    }
+    
+    // 后端验证: 卡号后4位 (0000-9999)
+    const last4 = card.last_4_digits;
+    // 检查是否是字符串（客户端会补零），且长度为4
+    if (typeof last4 !== 'string' || last4.length !== 4) {
+        return Response.json({ success: false, message: '卡号后4位格式错误 (非4位)' }, { status: 400 });
+    }
+    const last4Num = parseInt(last4, 10);
+    if (isNaN(last4Num) || last4Num < 0 || last4Num > 9999) {
+        return Response.json({ success: false, message: '卡号后4位超出有效范围 (0000-9999)' }, { status: 400 });
+    }
+    // 校验通过
+
+    await env.DB.prepare(
+      `INSERT INTO credit_cards (bank_name, last_4_digits, card_limit, billing_day, 
+      payment_type, payment_value, grace_days, max_grace_period, notes) 
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .bind(
+      card.bank_name,
+      card.last_4_digits,
+      card.card_limit,
+      card.billing_day,
+      card.payment_type,
+      card.payment_value,
+      card.grace_days,
+      card.max_grace_period,
+      card.notes
+    )
+    .run();
+
+    return Response.json({ success: true, message: '添加成功' });
+  } catch (e) {
+    return Response.json({ success: false, message: e.message }, { status: 500 });
+  }
+}
+
+/**
+ * API: 更新信用卡
+ */
+async function updateCard(request, env, id) {
+  try {
+    const card = await request.json();
+    
+    // 后端验证: 银行名称
+    if (!card.bank_name) {
+      return Response.json({ success: false, message: '发卡银行不能为空' }, { status: 400 });
+    }
+
+    // 后端验证: 卡号后4位 (0000-9999)
+    const last4 = card.last_4_digits;
+    // 检查是否是字符串（客户端会补零），且长度为4
+    if (typeof last4 !== 'string' || last4.length !== 4) {
+        return Response.json({ success: false, message: '卡号后4位格式错误 (非4位)' }, { status: 400 });
+    }
+    const last4Num = parseInt(last4, 10);
+    if (isNaN(last4Num) || last4Num < 0 || last4Num > 9999) {
+        return Response.json({ success: false, message: '卡号后4位超出有效范围 (0000-9999)' }, { status: 400 });
+    }
+    // 校验通过
+
+    await env.DB.prepare(
+      `UPDATE credit_cards SET bank_name = ?, last_4_digits = ?, card_limit = ?, 
+      billing_day = ?, payment_type = ?, payment_value = ?, grace_days = ?, 
+      max_grace_period = ?, notes = ? WHERE id = ?`
+    )
+    .bind(
+      card.bank_name,
+      card.last_4_digits,
+      card.card_limit,
+      card.billing_day,
+      card.payment_type,
+      card.payment_value,
+      card.grace_days,
+      card.max_grace_period,
+      card.notes,
+      id
+    )
+    .run();
+
+    return Response.json({ success: true, message: '更新成功' });
+  } catch (e) {
+    return Response.json({ success: false, message: e.message }, { status: 500 });
+  }
+}
+
+/**
+ * API: 删除信用卡
+ */
+async function deleteCard(request, env, id) {
+  try {
+    await env.DB.prepare('DELETE FROM credit_cards WHERE id = ?').bind(id).run();
+    return Response.json({ success: true, message: '删除成功' });
+  } catch (e) {
+    return Response.json({ success: false, message: e.message }, { status: 500 });
+  }
+}
+
+// =============================================
+// 前端 HTML, CSS, JS
+// =============================================
+
+/**
+ * 返回单页应用(SPA)的完整 HTML
+ */
+function getHtml(env) {
+  // 注意： env.DOMAIN 变量在这里被注入到 HTML 中 (虽然您说暂时不用)
+  // const domain = env.DOMAIN || 'your-domain.com';
+
+  return `
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="cards" />
+    <link rel="apple-touch-icon" href="https://www.guao.de/logos/cards.ico" />
+    <link rel="shortcut icon" href="https://www.guao.de/logos/cards.ico" type="image/x-icon" />
+    <link rel="icon" href="https://www.guao.de/logos/cards.ico" />
+    <title>卡掌柜</title>
+    <!-- 引入 Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 引入 Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        /* 深色主题和基本样式 */
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            -webkit-tap-highlight-color: transparent; /* 移除移动端点击高亮 */
+        }
+        
+        /* 日历样式 */
+        .calendar-grid {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            gap: 4px;
+        }
+        .calendar-day {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .calendar-day.today {
+            background-color: #4a5568; /* gray-700 */
+            color: white;
+            font-weight: bold;
+        }
+        .calendar-day.other-month {
+            color: #4a5568; /* gray-600 */
+        }
+        .calendar-day.highlight-billing {
+            background-color: #38a169; /* green-600 */
+            color: white;
+        }
+        .calendar-day.highlight-payment {
+            background-color: #e53e3e; /* red-600 */
+            color: white;
+        }
+        
+        /* Toast 消息提示 */
+        #toast {
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 12px 20px;
+            border-radius: 8px;
+            color: white;
+            z-index: 100;
+            opacity: 0;
+            transition: opacity 0.3s, top 0.3s;
+            visibility: hidden;
+        }
+        #toast.show {
+            opacity: 1;
+            top: 40px;
+            visibility: visible;
+        }
+        #toast.success {
+            background-color: #38a169; /* green-600 */
+        }
+        #toast.error {
+            background-color: #e53e3e; /* red-600 */
+        }
+
+        /* 隐藏数字输入框的箭头 */
+        input[type=number]::-webkit-inner-spin-button, 
+        input[type=number]::-webkit-outer-spin-button { 
+            -webkit-appearance: none; 
+            margin: 0; 
+        }
+        input[type=number] {
+            -moz-appearance: textfield;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-200">
+
+    <!-- 主容器 -->
+    <div class="max-w-md mx-auto min-h-screen bg-gray-900 pb-16">
+
+        <!-- ====================== -->
+        <!-- 1. 主页面 (卡片概览)   -->
+        <!-- ====================== -->
+        <div id="page-main">
+            <!-- 顶部栏 -->
+            <header class="flex justify-between items-center p-4">
+                <h1 class="text-xl font-bold">我的信用卡概览</h1>
+                <div id="auth-container">
+                    <!-- 未登录状态 -->
+                    <button id="login-button" class="cursor-pointer">
+                        <i data-lucide="log-in" class="w-5 h-5"></i>
+                    </button>
+                    <!-- 已登录状态 (默认隐藏) -->
+                    <div id="admin-info" class="hidden flex items-center space-x-2">
+                        <span id="admin-username" class="text-sm"></span>
+                        <button id="logout-button" class="cursor-pointer">
+                            <i data-lucide="log-out" class="w-5 h-5 text-red-500"></i>
+                        </button>
+                    </div>
+                </div>
+            </header>
+
+            <!-- 统计概览 -->
+            <div class="grid grid-cols-3 gap-3 px-4">
+                <div class="bg-gray-800 p-3 rounded-lg text-center">
+                    <div class="text-sm text-gray-400">卡片总数</div>
+                    <div id="stat-total-cards" class="text-2xl font-bold">0 张</div>
+                </div>
+                <div class="bg-gray-800 p-3 rounded-lg text-center">
+                    <div class="text-sm text-gray-400">7日内待还</div>
+                    <div id="stat-due-in-7" class="text-2xl font-bold">0 张</div>
+                </div>
+                <div class="bg-gray-800 p-3 rounded-lg text-center">
+                    <div class="text-sm text-gray-400">最长免息期</div>
+                    <div id="stat-max-grace" class="text-2xl font-bold">0 天</div>
+                </div>
+            </div>
+
+            <!-- 搜索栏 -->
+            <div class="px-4 mt-4">
+                <div class="relative">
+                    <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                        <i data-lucide="search" class="w-5 h-5 text-gray-400"></i>
+                    </div>
+                    <input type="search" id="search-bar" class="w-full bg-gray-800 border border-gray-700 rounded-lg pl-10 pr-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="搜索银行名称">
+                </div>
+            </div>
+
+            <!-- 日历控件 -->
+            <div class="px-4 mt-4">
+                <div class="bg-gray-800 p-4 rounded-lg">
+                    <!-- 日历头部 -->
+                    <div class="flex justify-between items-center mb-3">
+                        <button id="calendar-prev-month">
+                            <i data-lucide="chevron-left" class="w-5 h-5"></i>
+                        </button>
+                        <div class="text-center">
+                            <div id="calendar-month-year" class="font-bold"></div>
+                            <div id="calendar-toggle-mode" class="text-xs text-gray-400 cursor-pointer">
+                                (点击切换标注模式)
+                            </div>
+                        </div>
+                        <button id="calendar-next-month">
+                            <i data-lucide="chevron-right" class="w-5 h-5"></i>
+                        </button>
+                    </div>
+                    <!-- 日历网格 -->
+                    <div class="calendar-grid text-sm mb-2">
+                        <div class="text-center font-bold text-gray-400">日</div>
+                        <div class="text-center font-bold text-gray-400">一</div>
+                        <div class="text-center font-bold text-gray-400">二</div>
+                        <div class="text-center font-bold text-gray-400">三</div>
+                        <div class="text-center font-bold text-gray-400">四</div>
+                        <div class="text-center font-bold text-gray-400">五</div>
+                        <div class="text-center font-bold text-gray-400">六</div>
+                    </div>
+                    <div id="calendar-body" class="calendar-grid text-sm">
+                        <!-- 日期单元格将由 JS 填充 -->
+                    </div>
+                    <!-- 图例 -->
+                    <div class="text-xs text-gray-400 mt-3 flex justify-center items-center space-x-4">
+                        <span class="flex items-center"><span class="w-3 h-3 bg-green-600 rounded-full mr-1"></span> 账单日</span>
+                        <span class="flex items-center"><span class="w-3 h-3 bg-red-600 rounded-full mr-1"></span> 还款日</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 信用卡列表 -->
+            <div class="px-4 mt-4">
+                <!-- 列表头部 -->
+                <div class="flex justify-between items-center mb-2">
+                    <h2 class="text-lg font-bold">信用卡列表</h2>
+                    <button id="sort-toggle-button" class="text-sm text-blue-400 flex items-center">
+                        <span id="sort-toggle-label">还款日</span>
+                        <i data-lucide="chevrons-up-down" class="w-4 h-4 ml-1"></i>
+                    </button>
+                </div>
+
+                <!-- 列表表头: 调整为 grid-cols-7，重新分配列宽 -->
+                <div class="grid grid-cols-7 gap-1 text-xs text-gray-400 px-3 py-2">
+                    <div class="col-span-3">银行/尾号</div>
+                    <div class="col-span-1 text-center">账单日</div>
+                    <div class="col-span-2 text-center">还款日</div>
+                    <div class="col-span-1 text-right">免息期</div>
+                </div>
+
+                <!-- 列表内容 -->
+                <div id="card-list" class="space-y-2">
+                    <!-- 卡片条目将由 JS 填充 -->
+                </div>
+            </div>
+
+            <!-- 添加按钮 (固定在底部) -->
+            <div id="add-card-btn-container" class="fixed bottom-0 left-0 right-0 max-w-md mx-auto p-4 bg-gray-900 bg-opacity-80 backdrop-blur-sm">
+                <button id="add-card-btn-main" class="w-full bg-green-600 text-white font-bold py-3 px-4 rounded-lg flex items-center justify-center space-x-2 transition hover:bg-green-700">
+                    <i data-lucide="plus-circle" class="w-5 h-5"></i>
+                    <span>添加信用卡信息</span>
+                </button>
+            </div>
+
+        </div>
+
+        <!-- ====================== -->
+        <!-- 2. 管理员登录页面      -->
+        <!-- ====================== -->
+        <div id="page-login" class="hidden p-4">
+            <header class="flex justify-between items-center mb-6">
+                <h1 class="text-xl font-bold">管理员登录</h1>
+                <button id="login-cancel-button">
+                    <i data-lucide="x" class="w-6 h-6"></i>
+                </button>
+            </header>
+            <form id="login-form" class="space-y-4">
+                <div>
+                    <label for="username" class="block text-sm font-medium text-gray-400">用户名</label>
+                    <input type="text" id="username" class="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" required>
+                </div>
+                <div>
+                    <label for="password" class="block text-sm font-medium text-gray-400">密码</label>
+                    <input type="password" id="password" class="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" required>
+                </div>
+                <div class="flex space-x-4 pt-4">
+                    <button type="button" id="login-form-cancel" class="w-full bg-gray-700 text-white font-bold py-3 px-4 rounded-lg transition hover:bg-gray-600">取消</button>
+                    <button type="submit" class="w-full bg-blue-600 text-white font-bold py-3 px-4 rounded-lg transition hover:bg-blue-700">登录</button>
+                </div>
+            </form>
+        </div>
+
+        <!-- ====================== -->
+        <!-- 3. 添加/编辑卡片页面   -->
+        <!-- ====================== -->
+        <div id="page-card-form" class="hidden p-4">
+            <header class="flex justify-between items-center mb-6">
+                <h1 id="form-title" class="text-xl font-bold">添加信用卡</h1>
+                <button id="form-cancel-button">
+                    <i data-lucide="x" class="w-6 h-6"></i>
+                </button>
+            </header>
+            
+            <form id="card-form" class="space-y-4">
+                <input type="hidden" id="card-id">
+                
+                <!-- 银行名称 -->
+                <div>
+                    <label for="bank_name" class="block text-sm font-medium text-gray-400">发卡银行</label>
+                    <input type="text" id="bank_name" placeholder="例如：招商银行" maxlength="10" class="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" required>
+                </div>
+
+                <!-- 尾号 -->
+                <div>
+                    <label for="last_4_digits" class="block text-sm font-medium text-gray-400">卡号后4位 (0000-9999)</label>
+                    <!-- 更改为 type="number" 并设置 min/max 限制 -->
+                    <input type="number" id="last_4_digits" placeholder="例如：8888" min="0" max="9999" inputmode="numeric" class="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" required>
+                </div>
+
+                <!-- 额度 -->
+                <div>
+                    <label for="card_limit" class="block text-sm font-medium text-gray-400">卡片额度 (元)</label>
+                    <input type="number" id="card_limit" placeholder="例如：50000" max="1000000" class="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" required>
+                </div>
+
+                <!-- 账单日 -->
+                <div>
+                    <label for="billing_day" class="block text-sm font-medium text-gray-400">出账日 (每月x日)</label>
+                    <input type="number" id="billing_day" placeholder="1-31" min="1" max="31" class="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" required>
+                </div>
+
+                <!-- 还款日 -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-400">还款日</label>
+                    <div class="mt-1 flex items-center space-x-2">
+                        <!-- 模式一: 账单日后xx天 -->
+                        <div id="payment-type-days-after" class="flex-1">
+                            <div class="flex items-center space-x-2">
+                                <span class="text-nowrap">账单日后</span>
+                                <input type="number" id="payment_value_days" min="1" max="31" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="20">
+                                <span>天</span>
+                            </div>
+                        </div>
+                        <!-- 模式二: 每月固定xx日 -->
+                        <div id="payment-type-fixed-day" class="hidden flex-1">
+                            <div class="flex items-center space-x-2">
+                                <span class="text-nowrap">每月固定</span>
+                                <input type="number" id="payment_value_fixed" min="1" max="31" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="15">
+                                <span>日</span>
+                            </div>
+                        </div>
+                        <!-- 切换按钮 -->
+                        <button type="button" id="payment-type-toggle" class="p-2 bg-gray-700 rounded-lg">
+                            <i data-lucide="repeat-2" class="w-5 h-5"></i>
+                        </button>
+                    </div>
+                    <input type="hidden" id="payment_type" value="days_after_billing">
+                </div>
+                
+                <!-- 宽限期 -->
+                <div>
+                    <label for="grace_days" class="block text-sm font-medium text-gray-400">宽限期 (天)</label>
+                    <input type="number" id="grace_days" placeholder="例如：3" min="0" max="31" value="0" class="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" required>
+                </div>
+
+                <!-- 备注 -->
+                <div>
+                    <label for="notes" class="block text-sm font-medium text-gray-400">备注</label>
+                    <textarea id="notes" rows="3" maxlength="100" class="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="可选，最多100字..."></textarea>
+                </div>
+
+                <!-- 按钮组 -->
+                <div class="pt-4">
+                    <!-- 添加模式按钮 -->
+                    <div id="form-buttons-add" class="flex space-x-4">
+                        <button type="button" id="form-add-cancel" class="w-full bg-gray-700 text-white font-bold py-3 px-4 rounded-lg transition hover:bg-gray-600">取消</button>
+                        <button type="submit" class="w-full bg-green-600 text-white font-bold py-3 px-4 rounded-lg transition hover:bg-green-700">确认添加</button>
+                    </div>
+                    <!-- 编辑模式按钮 -->
+                    <div id="form-buttons-edit" class="hidden">
+                        <div class="flex space-x-4">
+                            <button type="button" id="form-delete-button" class="w-1/3 bg-red-700 text-white font-bold py-3 px-4 rounded-lg transition hover:bg-red-800">删除</button>
+                            <button type="submit" class="w-2/3 bg-blue-600 text-white font-bold py-3 px-4 rounded-lg transition hover:bg-blue-700">确认更新</button>
+                        </div>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Toast 提示框 -->
+    <div id="toast" class=""></div>
+
+    <!-- ============================================= -->
+    <!-- 客户端 JavaScript                               -->
+    <!-- ============================================= -->
+    <script>
+        // 全局状态
+        let allCards = [];
+        let filteredCards = [];
+        let currentSort = 'paymentDay'; // 'paymentDay' 或 'billingDay'
+        let calendarMode = 'paymentDay'; // 'paymentDay' 或 'billingDay'
+        let calendarDate = new Date(); // 日历当前显示的月份
+        let adminToken = sessionStorage.getItem('adminToken') || null;
+        let adminUsername = sessionStorage.getItem('adminUsername') || null;
+        let currentEditingCard = null; // 用于编辑模式
+
+        // DOM 元素引用
+        const pages = {
+            main: document.getElementById('page-main'),
+            login: document.getElementById('page-login'),
+            cardForm: document.getElementById('page-card-form'),
+        };
+        const authContainer = {
+            loginButton: document.getElementById('login-button'),
+            adminInfo: document.getElementById('admin-info'),
+            adminUsername: document.getElementById('admin-username'),
+            logoutButton: document.getElementById('logout-button'),
+        };
+        const stats = {
+            totalCards: document.getElementById('stat-total-cards'),
+            dueIn7: document.getElementById('stat-due-in-7'),
+            maxGrace: document.getElementById('stat-max-grace'),
+        };
+        const calendar = {
+            monthYear: document.getElementById('calendar-month-year'),
+            toggleMode: document.getElementById('calendar-toggle-mode'),
+            body: document.getElementById('calendar-body'),
+            prevMonth: document.getElementById('calendar-prev-month'),
+            nextMonth: document.getElementById('calendar-next-month'),
+        };
+        const list = {
+            sortButton: document.getElementById('sort-toggle-button'),
+            sortLabel: document.getElementById('sort-toggle-label'),
+            container: document.getElementById('card-list'),
+            searchBar: document.getElementById('search-bar'),
+        };
+        const form = {
+            page: document.getElementById('page-card-form'),
+            title: document.getElementById('form-title'),
+            form: document.getElementById('card-form'),
+            cardId: document.getElementById('card-id'),
+            bankName: document.getElementById('bank_name'),
+            last4: document.getElementById('last_4_digits'),
+            limit: document.getElementById('card_limit'),
+            billingDay: document.getElementById('billing_day'),
+            paymentType: document.getElementById('payment_type'),
+            paymentTypeDaysAfter: document.getElementById('payment-type-days-after'),
+            paymentValueDays: document.getElementById('payment_value_days'),
+            paymentTypeFixedDay: document.getElementById('payment-type-fixed-day'),
+            paymentValueFixed: document.getElementById('payment_value_fixed'),
+            paymentToggle: document.getElementById('payment-type-toggle'),
+            graceDays: document.getElementById('grace_days'),
+            // maxGracePeriod 字段已从表单中移除
+            notes: document.getElementById('notes'),
+            addButtons: document.getElementById('form-buttons-add'),
+            editButtons: document.getElementById('form-buttons-edit'),
+        };
+        
+        // --- 页面导航 ---
+        function showPage(pageId) {
+            Object.values(pages).forEach(page => page.classList.add('hidden'));
+            if (pages[pageId]) {
+                pages[pageId].classList.remove('hidden');
+                window.scrollTo(0, 0); // 切换页面时滚动到顶部
+            }
+        }
+
+        // --- Toast 提示 ---
+        let toastTimer;
+        function showToast(message, isError = false) {
+            const toast = document.getElementById('toast');
+            toast.textContent = message;
+            toast.className = 'show';
+            toast.classList.add(isError ? 'error' : 'success');
+
+            clearTimeout(toastTimer);
+            toastTimer = setTimeout(() => {
+                toast.className = '';
+            }, 3000);
+        }
+
+        // --- 核心日期计算逻辑 ---
+        
+        /**
+         * 获取指定卡片的下一个账单日和还款截止日
+         * @param {object} card - 信用卡对象
+         * @param {Date} refDate - 参考日期 (通常是 "today")
+         * @returns {object} { nextBillingDate, nextPaymentDeadline, daysUntilPayment }
+         */
+        function getCardDates(card, refDate) {
+            const today = new Date(refDate.getFullYear(), refDate.getMonth(), refDate.getDate());
+            const todayDay = today.getDate();
+            
+            const billingDay = parseInt(card.billing_day);
+            const paymentType = card.payment_type;
+            const paymentValue = parseInt(card.payment_value);
+            const graceDays = parseInt(card.grace_days || 0);
+
+            let thisMonthBillingDate = new Date(today.getFullYear(), today.getMonth(), billingDay);
+            let prevBillingDate, nextBillingDate;
+
+            if (todayDay <= billingDay) {
+                // 这个月的账单日还没到
+                prevBillingDate = new Date(today.getFullYear(), today.getMonth() - 1, billingDay);
+                nextBillingDate = thisMonthBillingDate;
+            } else {
+                // 这个月的账单日已经过了
+                prevBillingDate = thisMonthBillingDate;
+                nextBillingDate = new Date(today.getFullYear(), today.getMonth() + 1, billingDay);
+            }
+
+            // 计算 "上个账单" 的还款截止日
+            const deadlineForPrevBill = calculatePaymentDeadline(prevBillingDate, paymentType, paymentValue, graceDays);
+
+            if (today > deadlineForPrevBill) {
+                // 上个账单的还款日已过，计算 "下个账单" 的还款截止日
+                const deadlineForNextBill = calculatePaymentDeadline(nextBillingDate, paymentType, paymentValue, graceDays);
+                const daysUntil = (deadlineForNextBill - today) / (1000 * 60 * 60 * 24);
+                return {
+                    nextBillingDate: nextBillingDate,
+                    nextPaymentDeadline: deadlineForNextBill,
+                    daysUntilPayment: Math.ceil(daysUntil),
+                };
+            } else {
+                // "上个账单" 仍是当前活跃的还款周期
+                const daysUntil = (deadlineForPrevBill - today) / (1000 * 60 * 60 * 24);
+                return {
+                    nextBillingDate: prevBillingDate, // 关联的账单日
+                    nextPaymentDeadline: deadlineForPrevBill,
+                    daysUntilPayment: Math.ceil(daysUntil),
+                };
+            }
+        }
+
+        /**
+         * 辅助函数：根据账单日计算还款截止日
+         */
+        function calculatePaymentDeadline(billingDate, paymentType, paymentValue, graceDays) {
+            let paymentDate = new Date(billingDate.getTime());
+            
+            if (paymentType === 'days_after_billing') {
+                paymentDate.setDate(paymentDate.getDate() + paymentValue);
+            } else { // fixed_day
+                const billingDay = billingDate.getDate();
+                if (paymentValue > billingDay) {
+                    // 还款日在账单日同月
+                    paymentDate.setDate(paymentValue);
+                } else {
+                    // 还款日在账单日次月
+                    paymentDate.setMonth(paymentDate.getMonth() + 1);
+                    paymentDate.setDate(paymentValue);
+                }
+            }
+            
+            // 加上宽限期
+            paymentDate.setDate(paymentDate.getDate() + graceDays);
+            return paymentDate;
+        }
+
+        // --- 渲染函数 ---
+
+        /**
+         * 刷新整个仪表板
+         */
+        function refreshDashboard() {
+            // 1. (重新)计算所有卡片日期
+            const today = new Date();
+            const cardsWithDates = filteredCards.map(card => {
+                return {
+                    ...card,
+                    ...getCardDates(card, today),
+                };
+            });
+
+            // 2. 渲染统计
+            renderSummaryStats(cardsWithDates);
+
+            // 3. 渲染日历 (使用 allCards, 不受搜索过滤影响)
+            renderCalendar(calendarDate);
+
+            // 4. 排序
+            cardsWithDates.sort((a, b) => {
+                if (currentSort === 'paymentDay') {
+                    return a.daysUntilPayment - b.daysUntilPayment;
+                } else { // billingDay
+                    // 比较下一个账单日
+                    const todayDay = today.getDate();
+                    const aNextBill = a.billing_day < todayDay ? a.billing_day + 31 : a.billing_day;
+                    const bNextBill = b.billing_day < todayDay ? b.billing_day + 31 : b.billing_day;
+                    return aNextBill - bNextBill;
+                }
+            });
+
+            // 5. 渲染列表
+            renderCardList(cardsWithDates);
+
+            // 6. 更新认证状态
+            updateAuthUI();
+        }
+
+        /**
+         * 渲染统计概览
+         */
+        function renderSummaryStats(cardsWithDates) {
+            stats.totalCards.textContent = \`\${allCards.length} 张\`;
+
+            const dueIn7 = cardsWithDates.filter(c => c.daysUntilPayment >= 0 && c.daysUntilPayment <= 7).length;
+            stats.dueIn7.textContent = \`\${dueIn7} 张\`;
+            if (dueIn7 > 0) {
+                stats.dueIn7.classList.add('text-red-500');
+            } else {
+                stats.dueIn7.classList.remove('text-red-500');
+            }
+
+            // FIX: "最长免息期"统计应从所有卡片中找最大值 (基于数据库存储的值)
+            const maxGrace = allCards.reduce((max, c) => (c.max_grace_period > max ? c.max_grace_period : max), 0);
+            stats.maxGrace.textContent = \`\${Math.max(0, maxGrace)} 天\`;
+        }
+
+        /**
+         * 渲染卡片列表
+         */
+        function renderCardList(cardsWithDates) {
+            list.container.innerHTML = ''; // 清空列表
+            if (filteredCards.length === 0) {
+                list.container.innerHTML = '<p class="text-gray-500 text-center py-4">没有找到信用卡。</p>';
+                return;
+            }
+
+            cardsWithDates.forEach(card => {
+                const row = document.createElement('div');
+                // *** 核心改动: grid-cols-7, 适应新的 3-1-2-1 比例 ***
+                row.className = 'bg-gray-800 p-3 rounded-lg grid grid-cols-7 gap-1 items-center text-xs';
+                
+                // 如果已登录，添加点击事件
+                if (adminToken) {
+                    row.classList.add('cursor-pointer', 'transition', 'hover:bg-gray-700');
+                    row.onclick = () => showCardForm('edit', card);
+                }
+
+                const daysUntil = card.daysUntilPayment;
+                let paymentText, paymentColor;
+                if (daysUntil < 0) {
+                    paymentText = \`已逾期 \${-daysUntil} 天\`;
+                    paymentColor = 'text-red-400 font-bold';
+                } else if (daysUntil <= 7) {
+                    paymentText = \`剩余 \${daysUntil} 天\`;
+                    paymentColor = 'text-yellow-400 font-bold';
+                } else {
+                    paymentText = \`剩余 \${daysUntil} 天\`;
+                    paymentColor = 'text-gray-400';
+                }
+
+                row.innerHTML = \`
+                    <!-- 银行/尾号: col-span-3 (原 2/5 -> 3/7) -->
+                    <div class="col-span-3">
+                        <div class="font-bold text-sm text-white truncate">\${card.bank_name}</div>
+                        <div class="text-xs text-gray-400">尾号 \${card.last_4_digits}</div>
+                    </div>
+                    <!-- 账单日: col-span-1 (原 1/5 -> 1/7) -->
+                    <div class="col-span-1 text-center">
+                        <div class="text-white">\${card.billing_day} 日</div>
+                    </div>
+                    <!-- 还款日: col-span-2 (原 1/5 -> 2/7) -->
+                    <div class="col-span-2 text-center">
+                        <div class="text-white">\${card.nextPaymentDeadline.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })}</div>
+                        <div class="text-xs \${paymentColor}">\${paymentText}</div>
+                    </div>
+                    <!-- 免息期: col-span-1 (原 1/5 -> 1/7) -->
+                    <div class="col-span-1 text-right">
+                        <div class="text-white">\${card.max_grace_period} 天</div>
+                    </div>
+                \`;
+                list.container.appendChild(row);
+            });
+        }
+
+        /**
+         * 渲染日历
+         */
+        function renderCalendar(date) {
+            calendar.body.innerHTML = '';
+            calendar.monthYear.textContent = \`\${date.getFullYear()} 年 \${date.getMonth() + 1} 月\`;
+            
+            const today = new Date();
+            const month = date.getMonth();
+            const year = date.getFullYear();
+            
+            const firstDayOfMonth = new Date(year, month, 1).getDay(); // 0-6 (Sun-Sat)
+            const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+            // 预先计算本月高亮日期
+            // 简化：只高亮 "固定" 的日期，不动态计算 "账单日后xx天"
+            const billingDays = new Set(allCards.map(c => parseInt(c.billing_day)));
+            const paymentDays = new Set(allCards
+                .filter(c => c.payment_type === 'fixed_day')
+                .map(c => parseInt(c.payment_value))
+            );
+
+            // 填充上个月的空白
+            for (let i = 0; i < firstDayOfMonth; i++) {
+                const dayEl = document.createElement('div');
+                dayEl.className = 'calendar-day other-month';
+                calendar.body.appendChild(dayEl);
+            }
+
+            // 填充本月日期
+            for (let day = 1; day <= daysInMonth; day++) {
+                const dayEl = document.createElement('div');
+                dayEl.className = 'calendar-day';
+                dayEl.textContent = day;
+
+                // 标记今天
+                if (day === today.getDate() && month === today.getMonth() && year === today.getFullYear()) {
+                    dayEl.classList.add('today');
+                }
+
+                // 高亮
+                const isBilling = billingDays.has(day);
+                const isPayment = paymentDays.has(day);
+
+                if (calendarMode === 'billingDay' && isBilling) {
+                    dayEl.classList.add('highlight-billing');
+                } else if (calendarMode === 'paymentDay' && isPayment) {
+                    dayEl.classList.add('highlight-payment');
+                } else if (isBilling) {
+                    dayEl.classList.add('opacity-50', 'bg-green-900'); // 弱显示
+                } else if (isPayment) {
+                    dayEl.classList.add('opacity-50', 'bg-red-900'); // 弱显示
+                }
+                
+                calendar.body.appendChild(dayEl);
+            }
+        }
+        
+        /**
+         * 切换日历月份
+         */
+        function changeMonth(offset) {
+            calendarDate.setMonth(calendarDate.getMonth() + offset);
+            renderCalendar(new Date(calendarDate));
+        }
+
+        /**
+         * 切换日历高亮模式
+         */
+        function toggleCalendarMode() {
+            calendarMode = (calendarMode === 'paymentDay') ? 'billingDay' : 'paymentDay';
+            renderCalendar(calendarDate);
+            showToast(\`已切换到 \${calendarMode === 'paymentDay' ? '还款日' : '账单日'} 标注模式\`);
+        }
+        
+        /**
+         * 切换卡片列表排序
+         */
+        function toggleSort() {
+            currentSort = (currentSort === 'paymentDay') ? 'billingDay' : 'paymentDay';
+            list.sortLabel.textContent = (currentSort === 'paymentDay') ? '还款日' : '账单日';
+            refreshDashboard();
+            showToast(\`已切换为按 \${currentSort === 'paymentDay' ? '还款日' : '账单日'} 排序\`);
+        }
+        
+        /**
+         * 处理搜索
+         */
+        function handleSearch() {
+            const query = list.searchBar.value.toLowerCase().trim();
+            if (!query) {
+                filteredCards = [...allCards];
+            } else {
+                const keywords = query.split(/\s+/); // 按空格拆分关键词
+                filteredCards = allCards.filter(card => {
+                    const bankName = card.bank_name.toLowerCase();
+                    // 必须匹配所有关键词
+                    return keywords.every(kw => bankName.includes(kw));
+                });
+            }
+            refreshDashboard();
+        }
+
+        // --- 认证 和 API 调用 ---
+        
+        /**
+         * 更新顶部认证区域UI
+         */
+        function updateAuthUI() {
+            if (adminToken) {
+                authContainer.loginButton.classList.add('hidden');
+                authContainer.adminInfo.classList.remove('hidden');
+                authContainer.adminUsername.textContent = adminUsername;
+                document.getElementById('add-card-btn-container').classList.remove('hidden'); // 显示添加按钮
+            } else {
+                authContainer.loginButton.classList.remove('hidden');
+                authContainer.adminInfo.classList.add('hidden');
+                authContainer.adminUsername.textContent = '';
+                document.getElementById('add-card-btn-container').classList.add('hidden'); // 隐藏添加按钮
+            }
+        }
+        
+        /**
+         * 异步获取卡片数据
+         */
+        async function fetchCards() {
+            try {
+                const response = await fetch('/api/cards');
+                const data = await response.json();
+                if (data.success) {
+                    allCards = data.cards;
+                    handleSearch(); // 应用初始过滤 (即显示全部)
+                } else {
+                    showToast(data.message, true);
+                }
+            } catch (error) {
+                showToast('加载数据失败', true);
+            }
+        }
+        
+        /**
+         * 处理登录
+         */
+        async function handleLogin(e) {
+            e.preventDefault();
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+
+            try {
+                const response = await fetch('/api/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password }),
+                });
+
+                const data = await response.json();
+                if (data.success) {
+                    adminToken = data.token;
+                    adminUsername = data.username;
+                    sessionStorage.setItem('adminToken', adminToken); // 临时存储
+                    sessionStorage.setItem('adminUsername', adminUsername);
+                    showToast('登录成功');
+                    showPage('main');
+                    fetchCards(); // 重新加载数据 (为了列表可点击)
+                } else {
+                    showToast(data.message || '登录失败', true);
+                }
+            } catch (error) {
+                showToast('登录请求失败', true);
+            }
+        }
+
+        /**
+         * 处理登出
+         */
+        function handleLogout() {
+            adminToken = null;
+            adminUsername = null;
+            sessionStorage.removeItem('adminToken');
+            sessionStorage.removeItem('adminUsername');
+            showToast('已退出登录');
+            refreshDashboard(); // 刷新UI
+        }
+        
+        // --- 卡片表单 ---
+        
+        /**
+         * 显示卡片表单 (添加或编辑)
+         */
+        function showCardForm(mode, card = null) {
+            currentEditingCard = card; // 存储当前编辑的卡
+            form.form.reset(); // 重置表单
+
+            if (mode === 'add') {
+                form.title.textContent = '添加信用卡';
+                form.addButtons.classList.remove('hidden');
+                form.editButtons.classList.add('hidden');
+                // 确保还款日UI重置
+                setPaymentTypeUI('days_after_billing'); 
+            } else { // edit
+                form.title.textContent = '管理信用卡信息';
+                form.addButtons.classList.add('hidden');
+                form.editButtons.classList.remove('hidden');
+                
+                // 填充数据
+                form.cardId.value = card.id;
+                form.bankName.value = card.bank_name;
+                // 填充时，去掉前导零，让用户看到纯数字（例如 '0123' 变为 '123'）
+                form.last4.value = parseInt(card.last_4_digits, 10);
+                form.limit.value = card.card_limit;
+                form.billingDay.value = card.billing_day;
+                form.graceDays.value = card.grace_days;
+                // maxGracePeriod 字段已从表单中移除
+                form.notes.value = card.notes;
+                
+                // 设置还款日UI
+                setPaymentTypeUI(card.payment_type);
+                if (card.payment_type === 'days_after_billing') {
+                    form.paymentValueDays.value = card.payment_value;
+                } else {
+                    form.paymentValueFixed.value = card.payment_value;
+                }
+            }
+            showPage('cardForm');
+        }
+        
+        /**
+         * 切换还款日输入UI
+         */
+        function togglePaymentTypeUI() {
+            const currentType = form.paymentType.value;
+            const newType = (currentType === 'days_after_billing') ? 'fixed_day' : 'days_after_billing';
+            setPaymentTypeUI(newType);
+        }
+
+        function setPaymentTypeUI(type) {
+            form.paymentType.value = type;
+            if (type === 'days_after_billing') {
+                form.paymentTypeDaysAfter.classList.remove('hidden');
+                form.paymentTypeFixedDay.classList.add('hidden');
+                form.paymentValueFixed.value = ''; // 清空
+            } else {
+                form.paymentTypeDaysAfter.classList.add('hidden');
+                form.paymentTypeFixedDay.classList.remove('hidden');
+                form.paymentValueDays.value = ''; // 清空
+            }
+        }
+
+        /**
+         * 提交卡片表单 (添加或更新)
+         */
+        async function handleFormSubmit(e) {
+            e.preventDefault();
+            if (!adminToken) {
+                showToast('请先登录', true);
+                return;
+            }
+
+            // --- 客户端输入校验 ---
+            
+            // 0. 卡号后4位校验 (0-9999)
+            const last4Value = form.last4.value; // 获取原始输入值 (字符串)
+            const last4Num = parseInt(last4Value, 10);
+            
+            if (isNaN(last4Num) || last4Num < 0 || last4Num > 9999) {
+                showToast('卡号后4位必须是0000到9999之间的数字', true);
+                form.last4.focus();
+                return;
+            }
+            // 校验通过后，补齐为4位字符串（例如 '123' -> '0123'）
+            const last4Padded = last4Value.padStart(4, '0').slice(-4);
+            
+            // 1. 银行名称校验
+            const bankName = form.bankName.value.trim();
+            if (bankName.length === 0 || bankName.length > 10) {
+                showToast('发卡银行不能为空且最多10个字符', true);
+                form.bankName.focus();
+                return;
+            }
+            
+            // 2. 额度校验
+            const limit = parseInt(form.limit.value);
+            if (isNaN(limit) || limit < 0 || limit > 1000000) {
+                showToast('卡片额度必须是0到1,000,000之间的整数', true);
+                form.limit.focus();
+                return;
+            }
+
+            // 3. 出账日校验
+            const billingDay = parseInt(form.billingDay.value);
+            if (isNaN(billingDay) || billingDay < 1 || billingDay > 31) {
+                showToast('出账日必须是1-31之间的整数', true);
+                form.billingDay.focus();
+                return;
+            }
+            
+            // 4. 还款日数值校验
+            const paymentType = form.paymentType.value;
+            const paymentValueRaw = (paymentType === 'days_after_billing') ? form.paymentValueDays.value : form.paymentValueFixed.value;
+            const paymentValue = parseInt(paymentValueRaw);
+            
+            if (isNaN(paymentValue) || paymentValue < 1 || paymentValue > 31) {
+                showToast('还款日/天数必须是1-31之间的整数', true);
+                // 聚焦到当前可见的输入框
+                if (paymentType === 'days_after_billing') {
+                     form.paymentValueDays.focus();
+                } else {
+                    form.paymentValueFixed.focus();
+                }
+                return;
+            }
+            
+            // 5. 宽限期校验
+            const graceDays = parseInt(form.graceDays.value);
+            if (isNaN(graceDays) || graceDays < 0 || graceDays > 31) {
+                showToast('宽限期必须是0-31之间的整数', true);
+                form.graceDays.focus();
+                return;
+            }
+            // --- 客户端输入校验结束 ---
+
+
+            // 自动计算最长免息期: 
+            // "最长免息期" = "还款周期" + "一个账单周期(约30天)"
+            // "还款周期" (账单日到还款日的天数) *不* 包含 "宽限期"
+            let payment_period_days;
+            if (paymentType === 'days_after_billing') {
+                payment_period_days = paymentValue; // (e.g., 25 days)
+            } else { // fixed_day
+                // 这是一个近似值计算
+                if (paymentValue > billingDay) {
+                    // 同月, e.g., 账单日 1, 还款日 20 -> 19 天
+                    payment_period_days = (paymentValue - billingDay);
+                } else {
+                    // 跨月, e.g., 账单日 28, 还款日 10 -> (30-28) + 10 = 12 天 (近似)
+                    payment_period_days = (30 - billingDay) + paymentValue;
+                }
+            }
+            
+            // 最长免息期 = (还款周期天数) + 30天 (一个账单周期)
+            const calculatedMaxGrace = payment_period_days + 30;
+
+            const cardData = {
+                bank_name: bankName,
+                last_4_digits: last4Padded, // 使用补齐后的4位字符串
+                card_limit: limit,
+                billing_day: billingDay,
+                payment_type: paymentType,
+                payment_value: paymentValue,
+                grace_days: graceDays,
+                max_grace_period: calculatedMaxGrace, // 使用计算出的值
+                notes: form.notes.value.substring(0, 100)
+            };
+            
+            let url = '/api/cards';
+            let method = 'POST';
+            
+            if (currentEditingCard) { // 编辑模式
+                url = \`/api/cards/\${currentEditingCard.id}\`;
+                method = 'PUT';
+            }
+
+            try {
+                const response = await fetch(url, {
+                    method: method,
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': \`Bearer \${adminToken}\`
+                    },
+                    body: JSON.stringify(cardData)
+                });
+                
+                const data = await response.json();
+                if (data.success) {
+                    showToast(currentEditingCard ? '更新成功' : '添加成功');
+                    currentEditingCard = null;
+                    showPage('main');
+                    fetchCards(); // 刷新列表
+                } else {
+                    showToast(data.message || '操作失败', true);
+                }
+            } catch (error) {
+                showToast('请求失败', true);
+            }
+        }
+        
+        /**
+         * 处理删除卡片
+         */
+        async function handleDeleteCard() {
+            if (!currentEditingCard || !adminToken) return;
+            
+            // 简单的确认 (因为不能用 window.confirm)
+            // 在实际应用中, 你会想用一个自定义的模态框
+            const userConfirmed = confirm(\`确定要删除 \${currentEditingCard.bank_name} (尾号 \${currentEditingCard.last_4_digits}) 吗？\`);
+            if (!userConfirmed) {
+                return; 
+            }
+
+            try {
+                const response = await fetch(\`/api/cards/\${currentEditingCard.id}\`, {
+                    method: 'DELETE',
+                    headers: { 'Authorization': \`Bearer \${adminToken}\` }
+                });
+                
+                const data = await response.json();
+                if (data.success) {
+                    showToast('删除成功');
+                    currentEditingCard = null;
+                    showPage('main');
+                    fetchCards(); // 刷新列表
+                } else {
+                    showToast(data.message || '删除失败', true);
+                }
+            } catch (error) {
+                showToast('请求失败', true);
+            }
+        }
+
+        // --- 初始化和事件绑定 ---
+        document.addEventListener('DOMContentLoaded', () => {
+            // 页面导航
+            authContainer.loginButton.onclick = () => showPage('login');
+            document.getElementById('login-cancel-button').onclick = () => showPage('main');
+            document.getElementById('login-form-cancel').onclick = () => showPage('main');
+            document.getElementById('add-card-btn-main').onclick = () => showCardForm('add');
+            document.getElementById('form-cancel-button').onclick = () => showPage('main');
+            document.getElementById('form-add-cancel').onclick = () => showPage('main');
+            
+            // 认证
+            document.getElementById('login-form').onsubmit = handleLogin;
+            authContainer.logoutButton.onclick = handleLogout;
+            
+            // 主页交互
+            calendar.prevMonth.onclick = () => changeMonth(-1);
+            calendar.nextMonth.onclick = () => changeMonth(1);
+            calendar.toggleMode.onclick = toggleCalendarMode;
+            calendar.body.onclick = toggleCalendarMode; // 点击日历任意位置切换
+            list.sortButton.onclick = toggleSort;
+            list.searchBar.oninput = handleSearch;
+            
+            // 表单交互
+            form.paymentToggle.onclick = togglePaymentTypeUI;
+            form.form.onsubmit = handleFormSubmit;
+            document.getElementById('form-delete-button').onclick = handleDeleteCard;
+
+            // 初始化
+            fetchCards(); // 初始加载数据
+            lucide.createIcons(); // 激活图标
+        });
+
+    </script>
+</body>
+</html>
+  `;
+}
