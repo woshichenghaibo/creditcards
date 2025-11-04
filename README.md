@@ -345,15 +345,6 @@
 
 
 
-您好，这个 `D1_ERROR: no such table: credit_cards: SQLITE_ERROR` 错误提示非常明确：
-
-**“没有找到名为 credit\_cards 的表。”**
-
-这意味着您的 Worker 脚本 (`workers.js`) 已经成功运行并尝试连接 D1 数据库（`env.DB`），但是当它执行 SQL 查询（例如 `SELECT * FROM credit_cards`）时，D1 数据库报告说这个表不存在。
-
-这通常是因为您虽然创建了 D1 数据库（`credit-card-db`）并将其绑定到了 Worker，但**忘记了执行 SQL 命令来创建表结构和插入初始数据**。
-
------
 
 ### 如何解决
 
@@ -368,7 +359,7 @@
 4.  **运行 SQL 命令 1 (创建表):**
     在 SQL 输入框中粘贴以下代码，然后点击 **Execute**（执行）：
 
-    ```sql
+
     CREATE TABLE credit_cards (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       bank_name TEXT NOT NULL,
@@ -381,17 +372,16 @@
       max_grace_period INTEGER NOT NULL, -- 免息期
       notes TEXT
     );
-    ```
 
 5.  **运行 SQL 命令 2 (插入初始数据):**
     等待上一个命令成功后（控制台会显示成功），**清除**输入框中的旧代码，然后粘贴以下代码，再点击 **Execute**（执行）：
 
-    ```sql
+
     INSERT INTO credit_cards (bank_name, last_4_digits, card_limit, billing_day, payment_type, payment_value, grace_days, max_grace_period, notes)
     VALUES
     ('示例银行A', '1234', 50000, 10, 'days_after_billing', 20, 3, 53, '这是第一张示例卡'),
     ('示例银行B', '5678', 100000, 15, 'fixed_day', 5, 0, 50, '这是第二张示例卡，每月5日固定还款');
-    ```
+
 
 完成这 SQL 操作后，您的数据表就创建好了。请您\*\*刷新（重新加载）\*\*一下您的 Worker 网页，程序应该就能正常运行了，因为它现在可以找到 `credit_cards` 表了。
 
