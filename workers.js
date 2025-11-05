@@ -7,7 +7,7 @@
 
 // 定义一个简单的静态令牌用于管理员认证
 // 在实际生产中，您应该使用更安全的方法（如 JWT），但对于个人项目和“临时登录”的要求，这足够简单
-const ADMIN_TOKEN = "strong-secret-admin-token-1234567890";
+const ADMIN_TOKEN = "secret-admin-token-12345";
 
 export default {
   async fetch(request, env, ctx) {
