@@ -7,7 +7,7 @@
 
 // 定义一个简单的静态令牌用于管理员认证
 // 在实际生产中，您应该使用更安全的方法（如 JWT），但对于个人项目和“临时登录”的要求，这足够简单
-const ADMIN_TOKEN = "my-secret-admin-token-1234";
+const ADMIN_TOKEN = "strong-secret-admin-token-1234567890";
 
 export default {
   async fetch(request, env, ctx) {
@@ -248,7 +248,7 @@ function getHtml(env) {
     <link rel="apple-touch-icon" href="https://www.guao.de/logos/cards.ico" />
     <link rel="shortcut icon" href="https://www.guao.de/logos/cards.ico" type="image/x-icon" />
     <link rel="icon" href="https://www.guao.de/logos/cards.ico" />
-    <title>卡掌柜</title>
+    <title>信用卡掌柜</title>
     
     <style>
     body {
@@ -350,16 +350,24 @@ function getHtml(env) {
         /* Toast 消息提示 */
         #toast {
             position: fixed;
-            top: 20px;
+            top: 30px;
             left: 50%;
             transform: translateX(-50%);
-            padding: 12px 20px;
+            padding: 12px 15px;
             border-radius: 8px;
             color: white;
             z-index: 100;
             opacity: 0;
             transition: opacity 0.3s, top 0.3s;
             visibility: hidden;
+            /* 新增样式 - 推荐这个组合 */
+            min-width: 300px; /* 设置最小宽度 */
+            max-width: 70vw; /* 最大宽度为视口宽度的80% */
+            */
+            white-space: nowrap; /* 禁止文本换行 */
+            overflow: hidden; /* 隐藏溢出的文本 */
+            text-overflow: ellipsis; /* 超出的文本显示省略号 */
+            text-align: center;
         }
         #toast.show {
             opacity: 1;
@@ -395,7 +403,7 @@ function getHtml(env) {
         <div id="page-main">
             <!-- 顶部栏 -->
             <header class="flex justify-between items-center p-4">
-                <h1 class="text-xl font-bold">我的信用卡概览</h1>
+            <a href="https://github.com/woshichenghaibo/creditcards" target="_blank" class="text-xl font-bold">我的信用卡概览</a>
                 <div id="auth-container">
                     <!-- 未登录状态 -->
                     <button id="login-button" class="cursor-pointer">
