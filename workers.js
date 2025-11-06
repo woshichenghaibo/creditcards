@@ -869,7 +869,7 @@ function getHtml(env) {
          *
          * 修改说明：
          * - 将原来的“最长免息期”统计替换为“总授信额度”。
-         * - 计算所有卡片 card_limit 字段之和，并显示为带千位分隔符的“x 元”形式。
+         * - 计算所有卡片 card_limit 字段之和，并显示为 "x万元"（四舍五入为整数）。
          */
         function renderSummaryStats(cardsWithDates) {
             stats.totalCards.textContent = \`\${allCards.length} 张\`;
@@ -882,12 +882,13 @@ function getHtml(env) {
                 stats.dueIn7.classList.remove('text-red-500');
             }
 
-            // 新的统计: 总授信额度 (所有卡片 card_limit 之和)
+            // 新的统计: 总授信额度 (所有卡片 card_limit 之和)，单位：万元，四舍五入为整数
             const totalCredit = allCards.reduce((sum, c) => {
                 const v = Number(c.card_limit) || 0;
                 return sum + v;
             }, 0);
-            stats.maxGrace.textContent = \`\${formatNumber(totalCredit)} 元\`;
+            const totalInWanRounded = Math.round(totalCredit / 10000);
+            stats.maxGrace.textContent = \`\${totalInWanRounded}万元\`;
         }
 
         /**
