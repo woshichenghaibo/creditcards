@@ -361,8 +361,8 @@ function getHtml(env) {
             transition: opacity 0.3s, top 0.3s;
             visibility: hidden;
             /* 新增样式 - 推荐这个组合 */
-            min-width: 300px; /* 设置最小宽度 */
-            max-width: 70vw; /* 最大宽度为视口宽度的80% */
+            min-width: 250px; /* 设置最小宽度 */
+            max-width: 65vw; /* 最大宽度为视口宽度的80% */
             */
             white-space: nowrap; /* 禁止文本换行 */
             overflow: hidden; /* 隐藏溢出的文本 */
@@ -430,8 +430,8 @@ function getHtml(env) {
                     <div id="stat-due-in-7" class="text-2xl font-bold">0 张</div>
                 </div>
                 <div class="bg-gray-50 p-3 rounded-lg text-center">
-                    <div class="text-sm text-gray-600">最长免息期</div>
-                    <div id="stat-max-grace" class="text-2xl font-bold">0 天</div>
+                    <div class="text-sm text-gray-600">总授信额度</div>
+                    <div id="stat-max-grace" class="text-2xl font-bold">0 元</div>
                 </div>
             </div>
 
@@ -736,6 +736,15 @@ function getHtml(env) {
             }, 3000);
         }
 
+        // 格式化数字，添加千位分隔符
+        function formatNumber(num) {
+            try {
+                return Number(num).toLocaleString();
+            } catch (e) {
+                return String(num);
+            }
+        }
+
         // --- 核心日期计算逻辑 ---
         
         /**
@@ -857,6 +866,10 @@ function getHtml(env) {
 
         /**
          * 渲染统计概览
+         *
+         * 修改说明：
+         * - 将原来的“最长免息期”统计替换为“总授信额度”。
+         * - 计算所有卡片 card_limit 字段之和，并显示为带千位分隔符的“x 元”形式。
          */
         function renderSummaryStats(cardsWithDates) {
             stats.totalCards.textContent = \`\${allCards.length} 张\`;
@@ -869,9 +882,12 @@ function getHtml(env) {
                 stats.dueIn7.classList.remove('text-red-500');
             }
 
-            // FIX: "最长免息期"统计应从所有卡片中找最大值 (基于数据库存储的值)
-            const maxGrace = allCards.reduce((max, c) => (c.max_grace_period > max ? c.max_grace_period : max), 0);
-            stats.maxGrace.textContent = \`\${Math.max(0, maxGrace)} 天\`;
+            // 新的统计: 总授信额度 (所有卡片 card_limit 之和)
+            const totalCredit = allCards.reduce((sum, c) => {
+                const v = Number(c.card_limit) || 0;
+                return sum + v;
+            }, 0);
+            stats.maxGrace.textContent = \`\${formatNumber(totalCredit)} 元\`;
         }
 
         /**
@@ -934,6 +950,17 @@ function getHtml(env) {
 
         /**
          * 渲染日历
+         *
+         * 修正说明：
+         * 之前日历只对 "fixed_day" 类型的还款日进行高亮，忽略了 "days_after_billing" 类型（即账单日后 N 天）
+         * 并且没有将不同账单周期产生的还款日映射到显示的月份上，导致标注错误。
+         *
+         * 现在的策略：
+         * - 对于每张卡，计算在当前展示月中实际落在哪些日期上的还款截止日：
+         *   通过对该月和上月的账单日（billingDate）计算 calculatePaymentDeadline，然后检查 deadline 是否落在展示月内。
+         * - 在构造账单日期时先 clamp 到对应月份的最大天数，避免 new Date(...) 因 day 越界而滚到下一个月。
+         * - 将这些日期收集到 paymentDays 集合中（去重）。
+         * - 账单日高亮也基于 clamp 后的值。
          */
         function renderCalendar(date) {
             calendar.body.innerHTML = '';
@@ -947,12 +974,47 @@ function getHtml(env) {
             const daysInMonth = new Date(year, month + 1, 0).getDate();
 
             // 预先计算本月高亮日期
-            // 简化：只高亮 "固定" 的日期，不动态计算 "账单日后xx天"
-            const billingDays = new Set(allCards.map(c => parseInt(c.billing_day)));
-            const paymentDays = new Set(allCards
-                .filter(c => c.payment_type === 'fixed_day')
-                .map(c => parseInt(c.payment_value))
-            );
+            // 账单日集合 (使用 clamp 后的日)
+            const billingDays = new Set(allCards.map(c => {
+                const raw = parseInt(c.billing_day);
+                if (isNaN(raw)) return null;
+                // clamp 到本月最大天数，避免比如 31 在 11 月变成 12 月 1 日
+                const clamped = Math.min(Math.max(1, raw), daysInMonth);
+                return clamped;
+            }).filter(x => x !== null));
+
+            // 计算本展示月中真实的还款日集合（考虑 days_after_billing & fixed_day，以及宽限期）
+            const paymentDays = new Set();
+
+            allCards.forEach(c => {
+                const paymentType = c.payment_type;
+                const paymentValue = parseInt(c.payment_value);
+                const graceDays = parseInt(c.grace_days || 0);
+                const rawBillingDay = parseInt(c.billing_day);
+
+                if (isNaN(rawBillingDay) || isNaN(paymentValue)) return;
+
+                // 考虑上个月和本月的账单日作为候选（上个月的账单可能会导致还款日在本月）
+                // 使用 clamp：如果该月没有指定日，则视为该月最后一天
+                const yearPrev = (month === 0) ? year - 1 : year;
+                const monthPrev = month - 1;
+                const daysInPrevMonth = new Date(yearPrev, monthPrev + 1, 0).getDate();
+                const billingDayPrevClamped = Math.min(Math.max(1, rawBillingDay), daysInPrevMonth);
+                const billingDatePrev = new Date(yearPrev, monthPrev, billingDayPrevClamped);
+
+                const daysInThisMonth = daysInMonth;
+                const billingDayThisClamped = Math.min(Math.max(1, rawBillingDay), daysInThisMonth);
+                const billingDateThis = new Date(year, month, billingDayThisClamped);
+
+                const candidateBillingDates = [billingDatePrev, billingDateThis];
+
+                candidateBillingDates.forEach(billingDate => {
+                    const deadline = calculatePaymentDeadline(billingDate, paymentType, paymentValue, graceDays);
+                    if (deadline.getFullYear() === year && deadline.getMonth() === month) {
+                        paymentDays.add(deadline.getDate());
+                    }
+                });
+            });
 
             // 填充上个月的空白
             for (let i = 0; i < firstDayOfMonth; i++) {
