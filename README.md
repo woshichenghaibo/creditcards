@@ -140,7 +140,7 @@
 
 <br>
 
-包含所有功能、美化和交互逻辑的 **`workers.js`** 文件，您可以在上方看到。
+包含所有功能、美化和交互逻辑的 **`workers.js`** 文件，您可以在上方看到。记得修改const ADMIN_TOKEN = "secret-admin-token-12345";这一行。
 
 
  **`workers.js`** 代码特点：
