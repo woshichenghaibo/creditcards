@@ -1,4 +1,4 @@
-// 这是一个完整的 Cloudflare Worker 脚本
+// 这是一个完整的 Cloudflare Worker 脚本。
 // 它包含后端 API 逻辑 和 前端 HTML/CSS/JS
 
 // =============================================
@@ -350,20 +350,18 @@ function getHtml(env) {
         /* Toast 消息提示 */
         #toast {
             position: fixed;
-            top: 30px;
+            top: 50%; 
             left: 50%;
-            transform: translateX(-50%);
+            transform: translate(-50%, -50%); 
             padding: 12px 15px;
             border-radius: 8px;
             color: white;
             z-index: 100;
             opacity: 0;
-            transition: opacity 0.3s, top 0.3s;
+            transition: opacity 0.3s; 
             visibility: hidden;
-            /* 新增样式 - 推荐这个组合 */
             min-width: 250px; /* 设置最小宽度 */
             max-width: 65vw; /* 最大宽度为视口宽度的80% */
-            */
             white-space: nowrap; /* 禁止文本换行 */
             overflow: hidden; /* 隐藏溢出的文本 */
             text-overflow: ellipsis; /* 超出的文本显示省略号 */
@@ -371,7 +369,6 @@ function getHtml(env) {
         }
         #toast.show {
             opacity: 1;
-            top: 40px;
             visibility: visible;
         }
         #toast.success {
@@ -421,17 +418,17 @@ function getHtml(env) {
 
             <!-- 统计概览 -->
             <div class="grid grid-cols-3 gap-3 px-4">
-                <div class="bg-gray-50 p-3 rounded-lg text-center">
-                    <div class="text-sm text-gray-600">卡片总数</div>
-                    <div id="stat-total-cards" class="text-2xl font-bold">0 张</div>
+                <div class="bg-gray-200 p-3 rounded-lg text-center">
+                    <div class="text-sm text-gray-700">卡片总数</div>
+                    <div id="stat-total-cards" class="text-xl font-bold">0 张</div>
                 </div>
-                <div class="bg-gray-50 p-3 rounded-lg text-center">
-                    <div class="text-sm text-gray-600">7日内待还</div>
-                    <div id="stat-due-in-7" class="text-2xl font-bold">0 张</div>
+                <div class="bg-gray-200 p-3 rounded-lg text-center">
+                    <div class="text-sm text-gray-700">7日内待还</div>
+                    <div id="stat-due-in-7" class="text-xl font-bold">0 张</div>
                 </div>
-                <div class="bg-gray-50 p-3 rounded-lg text-center">
-                    <div class="text-sm text-gray-600">总授信额度</div>
-                    <div id="stat-max-grace" class="text-2xl font-bold">0 元</div>
+                <div class="bg-gray-200 p-3 rounded-lg text-center">
+                    <div class="text-sm text-gray-700">总授信额度</div>
+                    <div id="stat-max-grace" class="text-xl font-bold">0 元</div>
                 </div>
             </div>
 
@@ -919,7 +916,7 @@ function getHtml(env) {
                     paymentColor = 'text-red-400 font-bold';
                 } else if (daysUntil <= 7) {
                     paymentText = \`剩余 \${daysUntil} 天\`;
-                    paymentColor = 'text-yellow-400 font-bold';
+                    paymentColor = 'text-orange-400 font-bold';
                 } else {
                     paymentText = \`剩余 \${daysUntil} 天\`;
                     paymentColor = 'text-gray-600';
