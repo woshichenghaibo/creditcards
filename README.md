@@ -64,7 +64,7 @@
 
 本应用是为 Cloudflare Workers 定制的单文件应用。请按以下步骤部署：
 
-### 步骤 A: 创建 D1 数据库并初始化
+### 步骤 A: 创建 D1 数据库并初始化（注意，如果你是2025年11约10日之前部署的1.0版本升级，请看最后介绍）
 
 1.  **创建数据库：**
 
@@ -79,17 +79,19 @@
     <!-- end list -->
 
     ```sql
-    CREATE TABLE credit_cards (
-        id TEXT PRIMARY KEY,
-        bank_name TEXT NOT NULL,
-        last_4_digits TEXT NOT NULL,
-        credit_limit INTEGER,
-        billing_day INTEGER NOT NULL,
-        repayment_type TEXT NOT NULL, -- 'relative' (账单日后) or 'fixed' (固定日)
-        repayment_value INTEGER NOT NULL,
-        grace_period INTEGER DEFAULT 0, -- 宽限期 (天)
-        notes TEXT
-    );
+CREATE TABLE IF NOT EXISTS credit_cards (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,    -- 自增主键，Worker 的 INSERT 不提供 id 时可用
+    bank_name TEXT NOT NULL,
+    last_4_digits TEXT NOT NULL,
+    card_limit INTEGER,
+    billing_day INTEGER NOT NULL,
+    payment_type TEXT NOT NULL,              -- 'days_after_billing' 或 'fixed_day'
+    payment_value INTEGER NOT NULL,
+    grace_days INTEGER DEFAULT 0,            -- 宽限期 (天)
+    max_grace_period INTEGER,                -- 自动计算并由后端/前端存储
+    annual_fee INTEGER DEFAULT 0,            -- 年费 (元)，默认 0
+    notes TEXT
+);
     ```
 
       * 点击 **执行 (Execute)**。
@@ -101,10 +103,10 @@
     <!-- end list -->
 
     ```sql
-    INSERT INTO credit_cards (id, bank_name, last_4_digits, credit_limit, billing_day, repayment_type, repayment_value, grace_period, notes) 
-    VALUES 
-        ('card-demo-1', '示例银行A', '1234', 50000, 10, 'relative', 20, 3, '这是第一张示例卡'), 
-        ('card-demo-2', '示例银行B', '5678', 100000, 15, 'fixed', 5, 0, '这是第二张示例卡');
+INSERT INTO credit_cards (bank_name, last_4_digits, card_limit, billing_day, payment_type, payment_value, grace_days, max_grace_period, annual_fee, notes)
+VALUES
+  ('示例银行A', '1234', 50000, 10, 'days_after_billing', 20, 3, 53, 0, '这是第一张示例卡'),
+  ('示例银行B', '5678', 100000, 15, 'fixed_day', 5, 0, 35, 200, '这是第二张示例卡');
     ```
 
       * 点击 **执行 (Execute)**。
@@ -153,3 +155,15 @@
 6.  实现了还款日计算方式的切换交互和表单校验。
 
 您可以按照 README 中的详细部署步骤，将这个单文件应用部署到您的 Cloudflare 环境中。
+
+### 特殊步骤 
+注意，如果你是2025年11约10日之前部署的1.0版本升级，请先：
+      * 粘贴以下 SQL 代码来插入新列，因为数据库中新增了年费：
+
+    <!-- end list -->
+
+    ```sql
+ALTER TABLE credit_cards ADD COLUMN annual_fee INTEGER DEFAULT 0;
+    ```
+
+      * 点击 **执行 (Execute)**。
