@@ -98,14 +98,12 @@ CREATE TABLE IF NOT EXISTS credit_cards (
 
       * 等待上一步成功后，清除输入框。粘贴以下代码以预设两条卡片信息：
 
-    <!-- end list -->
-
-    ```sql
+```sql
 INSERT INTO credit_cards (bank_name, last_4_digits, card_limit, billing_day, payment_type, payment_value, grace_days, max_grace_period, annual_fee, notes)
 VALUES
   ('示例银行A', '1234', 50000, 10, 'days_after_billing', 20, 3, 53, 0, '这是第一张示例卡'),
   ('示例银行B', '5678', 100000, 15, 'fixed_day', 5, 0, 35, 200, '这是第二张示例卡');
-    ```
+```
 
       * 点击 **执行 (Execute)**。
 
@@ -158,8 +156,8 @@ VALUES
 注意，如果你是2025年11约10日之前部署的1.0版本升级，请先：
       * 粘贴以下 SQL 代码来插入新列，因为数据库中新增了年费：
 
-    ```sql
+```sql
 ALTER TABLE credit_cards ADD COLUMN annual_fee INTEGER DEFAULT 0;
-    ```
+```
 
       * 点击 **执行 (Execute)**。
