@@ -162,3 +162,21 @@ ALTER TABLE credit_cards ADD COLUMN annual_fee INTEGER DEFAULT 0;
 ```
 
       * 点击 **执行 (Execute)**。
+> 验证。控制台输入
+ ```sql
+PRAGMA table_info(credit_cards);
+```
+>    后得到如下信息：
+cid	name	type	notnull	dflt_value	pk
+0	id	INTEGER	0	<null>	1
+1	bank_name	TEXT	1	<null>	0
+2	last_4_digits	TEXT	1	<null>	0
+3	card_limit	INTEGER	0	<null>	0
+4	billing_day	INTEGER	1	<null>	0
+5	payment_type	TEXT	1	<null>	0
+6	payment_value	INTEGER	1	<null>	0
+7	grace_days	INTEGER	0	0	0
+8	max_grace_period	INTEGER	1	<null>	0
+9	notes	TEXT	0	<null>	0
+10	annual_fee	INTEGER	0	0	0
+即为正确。
