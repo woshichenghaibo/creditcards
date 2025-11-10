@@ -76,9 +76,7 @@
       * 进入您创建的 D1 数据库，转到 **控制台 (Console)** 选项卡。
       * 粘贴以下 SQL 代码来创建 `credit_cards` 表，注意删掉“--”及后面的注释：
 
-    <!-- end list -->
-
-    ```sql
+```sql
 CREATE TABLE IF NOT EXISTS credit_cards (
     id INTEGER PRIMARY KEY AUTOINCREMENT,    -- 自增主键，Worker 的 INSERT 不提供 id 时可用
     bank_name TEXT NOT NULL,
@@ -92,7 +90,7 @@ CREATE TABLE IF NOT EXISTS credit_cards (
     annual_fee INTEGER DEFAULT 0,            -- 年费 (元)，默认 0
     notes TEXT
 );
-    ```
+```
 
       * 点击 **执行 (Execute)**。
 
