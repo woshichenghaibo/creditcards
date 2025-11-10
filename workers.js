@@ -544,6 +544,11 @@ function getHtml(env) {
                 </button>
             </div>
 
+            <!-- 底部开源提示 -->
+            <div class="px-4 mt-4 mb-8 text-center text-xs text-gray-500">
+                信用卡掌柜V2.0 已在 <a href="https://github.com/woshichenghaibo/creditcards" target="_blank" rel="noopener noreferrer" class="text-blue-500 underline">github</a> 开源
+            </div>
+
         </div>
 
         <!-- ====================== -->
@@ -608,7 +613,7 @@ function getHtml(env) {
                 <!-- 账单日 -->
                 <div>
                     <label for="billing_day" class="block text-sm font-medium text-gray-600">出账日 (每月x日)</label>
-                    <input type="number" id="billing_day" placeholder="1-31" min="1" max="31" class="mt-1 w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500" required>
+                    <input type="number" id="billing_day" placeholder="例如：5" min="1" max="31" class="mt-1 w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500" required>
                 </div>
 
                 <!-- 还款日 -->
@@ -619,7 +624,7 @@ function getHtml(env) {
                         <div id="payment-type-days-after" class="flex-1">
                             <div class="flex items-center space-x-2">
                                 <span class="text-nowrap">账单日后</span>
-                                <input type="number" id="payment_value_days" min="1" max="31" class="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="20">
+                                <input type="number" id="payment_value_days" min="1" max="31" class="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="例如：20">
                                 <span>天</span>
                             </div>
                         </div>
@@ -627,7 +632,7 @@ function getHtml(env) {
                         <div id="payment-type-fixed-day" class="hidden flex-1">
                             <div class="flex items-center space-x-2">
                                 <span class="text-nowrap">每月固定</span>
-                                <input type="number" id="payment_value_fixed" min="1" max="31" class="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="15">
+                                <input type="number" id="payment_value_fixed" min="1" max="31" class="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="例如：15">
                                 <span>日</span>
                             </div>
                         </div>
