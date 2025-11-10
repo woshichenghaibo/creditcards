@@ -128,7 +128,7 @@ async function addCard(request, env) {
     if (!card.bank_name) {
       return Response.json({ success: false, message: '发卡银行不能为空' }, { status: 400 });
     }
-    
+
     // 后端验证: 卡号后4位 (0000-9999)
     const last4 = card.last_4_digits;
     // 检查是否是字符串（客户端会补零），且长度为4
@@ -141,10 +141,22 @@ async function addCard(request, env) {
     }
     // 校验通过
 
+    // 后端验证: 卡片额度（与前端一致，0 - 1,000,000）
+    const limitNum = Number(card.card_limit);
+    if (isNaN(limitNum) || limitNum < 0 || limitNum > 1000000) {
+      return Response.json({ success: false, message: '卡片额度必须是0到1,000,000之间的整数' }, { status: 400 });
+    }
+
+    // 后端验证: 年费（与卡片额度相同的校验规则）
+    const annualFeeNum = Number(card.annual_fee || 0);
+    if (isNaN(annualFeeNum) || annualFeeNum < 0 || annualFeeNum > 1000000) {
+      return Response.json({ success: false, message: '年费必须是0到1,000,000之间的整数' }, { status: 400 });
+    }
+
     await env.DB.prepare(
       `INSERT INTO credit_cards (bank_name, last_4_digits, card_limit, billing_day, 
-      payment_type, payment_value, grace_days, max_grace_period, notes) 
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      payment_type, payment_value, grace_days, max_grace_period, annual_fee, notes) 
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .bind(
       card.bank_name,
@@ -155,6 +167,7 @@ async function addCard(request, env) {
       card.payment_value,
       card.grace_days,
       card.max_grace_period,
+      card.annual_fee,
       card.notes
     )
     .run();
@@ -189,10 +202,22 @@ async function updateCard(request, env, id) {
     }
     // 校验通过
 
+    // 后端验证: 卡片额度（与前端一致，0 - 1,000,000）
+    const limitNum = Number(card.card_limit);
+    if (isNaN(limitNum) || limitNum < 0 || limitNum > 1000000) {
+      return Response.json({ success: false, message: '卡片额度必须是0到1,000,000之间的整数' }, { status: 400 });
+    }
+
+    // 后端验证: 年费（与卡片额度相同的校验规则）
+    const annualFeeNum = Number(card.annual_fee || 0);
+    if (isNaN(annualFeeNum) || annualFeeNum < 0 || annualFeeNum > 1000000) {
+      return Response.json({ success: false, message: '年费必须是0到1,000,000之间的整数' }, { status: 400 });
+    }
+
     await env.DB.prepare(
       `UPDATE credit_cards SET bank_name = ?, last_4_digits = ?, card_limit = ?, 
       billing_day = ?, payment_type = ?, payment_value = ?, grace_days = ?, 
-      max_grace_period = ?, notes = ? WHERE id = ?`
+      max_grace_period = ?, annual_fee = ?, notes = ? WHERE id = ?`
     )
     .bind(
       card.bank_name,
@@ -203,6 +228,7 @@ async function updateCard(request, env, id) {
       card.payment_value,
       card.grace_days,
       card.max_grace_period,
+      card.annual_fee,
       card.notes,
       id
     )
@@ -360,8 +386,10 @@ function getHtml(env) {
             opacity: 0;
             transition: opacity 0.3s; 
             visibility: hidden;
+            /* 新增样式 - 推荐这个组合 */
             min-width: 250px; /* 设置最小宽度 */
             max-width: 65vw; /* 最大宽度为视口宽度的80% */
+            */
             white-space: nowrap; /* 禁止文本换行 */
             overflow: hidden; /* 隐藏溢出的文本 */
             text-overflow: ellipsis; /* 超出的文本显示省略号 */
@@ -369,6 +397,7 @@ function getHtml(env) {
         }
         #toast.show {
             opacity: 1;
+            
             visibility: visible;
         }
         #toast.success {
@@ -616,6 +645,12 @@ function getHtml(env) {
                     <input type="number" id="grace_days" placeholder="例如：3" min="0" max="31" value="0" class="mt-1 w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500" required>
                 </div>
 
+                <!-- 年费 (新增) -->
+                <div>
+                    <label for="annual_fee" class="block text-sm font-medium text-gray-600">年费 (元)</label>
+                    <input type="number" id="annual_fee" placeholder="例如：200" max="1000000" min="0" class="mt-1 w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+
                 <!-- 备注 -->
                 <div>
                     <label for="notes" class="block text-sm font-medium text-gray-600">备注</label>
@@ -704,6 +739,7 @@ function getHtml(env) {
             paymentValueFixed: document.getElementById('payment_value_fixed'),
             paymentToggle: document.getElementById('payment-type-toggle'),
             graceDays: document.getElementById('grace_days'),
+            annualFee: document.getElementById('annual_fee'),
             // maxGracePeriod 字段已从表单中移除
             notes: document.getElementById('notes'),
             addButtons: document.getElementById('form-buttons-add'),
@@ -885,7 +921,7 @@ function getHtml(env) {
                 return sum + v;
             }, 0);
             const totalInWanRounded = Math.round(totalCredit / 10000);
-            stats.maxGrace.textContent = \`\${totalInWanRounded}万元\`;
+            stats.maxGrace.textContent = \`\${totalInWanRounded} 万元\`;
         }
 
         /**
@@ -922,10 +958,20 @@ function getHtml(env) {
                     paymentColor = 'text-gray-600';
                 }
 
+                // 银行名称颜色：如果有年费 (>0) 则显示为紫黑色
+                let bankNameHtml;
+                const annualFeeVal = Number(card.annual_fee || 0);
+                if (annualFeeVal > 0) {
+                    // 紫黑色（自定义深紫色），你可以改为其他颜色或 tailwind 类
+                    bankNameHtml = \`<div class="font-bold text-sm truncate" style="color:#2e1b3b">\${card.bank_name}</div>\`;
+                } else {
+                    bankNameHtml = \`<div class="font-bold text-sm text-gray-900 truncate">\${card.bank_name}</div>\`;
+                }
+
                 row.innerHTML = \`
                     <!-- 银行/尾号: col-span-3 (原 2/5 -> 3/7) -->
                     <div class="col-span-3">
-                        <div class="font-bold text-sm text-gray-900 truncate">\${card.bank_name}</div>
+                        \${bankNameHtml}
                         <div class="text-xs text-gray-600">尾号 \${card.last_4_digits}</div>
                     </div>
                     <!-- 账单日: col-span-1 (原 1/5 -> 1/7) -->
@@ -1191,6 +1237,7 @@ function getHtml(env) {
                 form.editButtons.classList.add('hidden');
                 // 确保还款日UI重置
                 setPaymentTypeUI('days_after_billing'); 
+                form.annualFee.value = '';
             } else { // edit
                 form.title.textContent = '管理信用卡信息';
                 form.addButtons.classList.add('hidden');
@@ -1204,6 +1251,8 @@ function getHtml(env) {
                 form.limit.value = card.card_limit;
                 form.billingDay.value = card.billing_day;
                 form.graceDays.value = card.grace_days;
+                // 年费（新增）
+                form.annualFee.value = card.annual_fee || '';
                 // maxGracePeriod 字段已从表单中移除
                 form.notes.value = card.notes;
                 
@@ -1242,6 +1291,10 @@ function getHtml(env) {
 
         /**
          * 提交卡片表单 (添加或更新)
+         *
+         * 修改点（仅此处）：
+         * - 除了备注(notes)外，所有字段在提交时都不允许为空（添加 & 更新）
+         * - 其他已有验证逻辑保持不变
          */
         async function handleFormSubmit(e) {
             e.preventDefault();
@@ -1250,7 +1303,49 @@ function getHtml(env) {
                 return;
             }
 
-            // --- 客户端输入校验 ---
+            // --- 必填非空检查（除备注外） ---
+            // 注意：这里对用户要求的“所有字段非空（除备注）”进行前端强校验
+            if ((form.bankName.value || '').trim() === '') {
+                showToast('发卡银行不能为空', true);
+                form.bankName.focus();
+                return;
+            }
+            if ((form.last4.value || '').toString().trim() === '') {
+                showToast('卡号后4位不能为空', true);
+                form.last4.focus();
+                return;
+            }
+            if ((form.limit.value || '').toString().trim() === '') {
+                showToast('卡片额度不能为空', true);
+                form.limit.focus();
+                return;
+            }
+            if ((form.billingDay.value || '').toString().trim() === '') {
+                showToast('出账日不能为空', true);
+                form.billingDay.focus();
+                return;
+            }
+            // 还款日：依据当前模式，相关输入不能为空
+            const paymentType = form.paymentType.value;
+            const paymentValueRaw = (paymentType === 'days_after_billing') ? (form.paymentValueDays.value || '') : (form.paymentValueFixed.value || '');
+            if (paymentValueRaw.toString().trim() === '') {
+                showToast('还款日/天数不能为空', true);
+                if (paymentType === 'days_after_billing') form.paymentValueDays.focus(); else form.paymentValueFixed.focus();
+                return;
+            }
+            if ((form.graceDays.value || '').toString().trim() === '') {
+                showToast('宽限期不能为空', true);
+                form.graceDays.focus();
+                return;
+            }
+            if ((form.annualFee.value || '').toString().trim() === '') {
+                showToast('年费不能为空', true);
+                form.annualFee.focus();
+                return;
+            }
+            // --- 非空检查结束 ---
+
+            // --- 客户端输入校验（原有逻辑，保持不变） ---
             
             // 0. 卡号后4位校验 (0-9999)
             const last4Value = form.last4.value; // 获取原始输入值 (字符串)
@@ -1287,10 +1382,8 @@ function getHtml(env) {
                 form.billingDay.focus();
                 return;
             }
-            
+
             // 4. 还款日数值校验
-            const paymentType = form.paymentType.value;
-            const paymentValueRaw = (paymentType === 'days_after_billing') ? form.paymentValueDays.value : form.paymentValueFixed.value;
             const paymentValue = parseInt(paymentValueRaw);
             
             if (isNaN(paymentValue) || paymentValue < 1 || paymentValue > 31) {
@@ -1309,6 +1402,14 @@ function getHtml(env) {
             if (isNaN(graceDays) || graceDays < 0 || graceDays > 31) {
                 showToast('宽限期必须是0-31之间的整数', true);
                 form.graceDays.focus();
+                return;
+            }
+
+            // 6. 年费校验（与额度相同规则）
+            const annualFee = parseInt(form.annualFee.value || '0');
+            if (isNaN(annualFee) || annualFee < 0 || annualFee > 1000000) {
+                showToast('年费必须是0到1,000,000之间的整数', true);
+                form.annualFee.focus();
                 return;
             }
             // --- 客户端输入校验结束 ---
@@ -1343,6 +1444,7 @@ function getHtml(env) {
                 payment_value: paymentValue,
                 grace_days: graceDays,
                 max_grace_period: calculatedMaxGrace, // 使用计算出的值
+                annual_fee: annualFee,
                 notes: form.notes.value.substring(0, 100)
             };
             
