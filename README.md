@@ -160,8 +160,6 @@ VALUES
 注意，如果你是2025年11约10日之前部署的1.0版本升级，请先：
       * 粘贴以下 SQL 代码来插入新列，因为数据库中新增了年费：
 
-    <!-- end list -->
-
     ```sql
 ALTER TABLE credit_cards ADD COLUMN annual_fee INTEGER DEFAULT 0;
     ```
