@@ -281,47 +281,42 @@ function getHtml(env) {
         overflow-y: scroll;
     }
     .status.cards .thirteen.wide.column { 
-        white-space: nowrap; /* 防止文本换行 */
-        overflow: hidden; /* 隐藏溢出的内容 */
-        letter-spacing: -0.2px;/* 字符间距略小 */
+        white-space: nowrap;
+        overflow: hidden;
+        letter-spacing: -0.2px;
     }
-    </style>
-
-<!-- 返回顶部按钮 -->
+</style>
+<!-- 修改后的返回顶部按钮 -->
 <button id="topBtn" class="top-btn" 
-    style="display: none; position: fixed; bottom: 20px; right: 20px; z-index: 9999; 
+    style="display: none; position: fixed; bottom: 11%; right: 20px; z-index: 9999; 
            background-color: #ffcc00; color: white; border: none; border-radius: 50%; 
            width: 40px; height: 40px; font-size: 20px; display: flex; 
            align-items: center; justify-content: center; cursor: pointer;">
     ▲
 </button>
-
 <script>
     // 获取返回顶部按钮
     const topBtn = document.getElementById('topBtn');
-
     // 当DOM加载完成后执行
     document.addEventListener('DOMContentLoaded', function() {
         // 监听滚动事件
         window.onscroll = function() { scrollFunction(); };
-
+        scrollFunction();
         // 显示或隐藏返回顶部按钮
         function scrollFunction() {
-            if (document.body.scrollTop > 70 || document.documentElement.scrollTop > 70) {
-                topBtn.style.display = "block";
+            if (document.body.scrollTop > 200 || document.documentElement.scrollTop > 200) {
+                topBtn.style.display = "flex";
             } else {
                 topBtn.style.display = "none";
             }
         }
-
         // 点击按钮时滚动到顶部
         topBtn.addEventListener('click', function() {
-            document.body.scrollTop = 0; // 对于 Safari
-            document.documentElement.scrollTop = 0; // 对于 Chrome, Firefox, IE 和 Opera
+            document.body.scrollTop = 0;
+            document.documentElement.scrollTop = 0;
         });
     });
 </script>
-
 <script>
     document.querySelectorAll('.status.cards .thirteen.wide.column').forEach(element => {
         element.textContent = element.textContent.replace(/Cores/g, 'C');
@@ -415,6 +410,18 @@ function getHtml(env) {
         }
         input[type=number] {
             -moz-appearance: textfield;
+        }
+
+        /* 导出按钮样式（简单） */
+        #export-cards-btn {
+            background-color: #2563eb; /* blue-600 */
+            color: white;
+            padding: 0.5rem 0.75rem;
+            border-radius: 0.5rem;
+            font-weight: 600;
+        }
+        #export-cards-btn:hover {
+            background-color: #1e40af;
         }
     </style>
 </head>
@@ -536,17 +543,23 @@ function getHtml(env) {
                 </div>
             </div>
 
-            <!-- 添加按钮 (固定在底部) -->
+            <!-- 添加按钮 (固定在底部)；右侧新增“信用卡数据导出”按钮 -->
             <div id="add-card-btn-container" class="fixed bottom-0 left-0 right-0 max-w-md mx-auto p-4 bg-white bg-opacity-90 backdrop-blur-sm">
-                <button id="add-card-btn-main" class="w-full bg-green-600 text-white font-bold py-3 px-4 rounded-lg flex items-center justify-center space-x-2 transition hover:bg-green-700">
-                    <i data-lucide="plus-circle" class="w-5 h-5"></i>
-                    <span>添加信用卡信息</span>
-                </button>
+                <div class="flex space-x-2">
+                    <button id="add-card-btn-main" class="flex-1 bg-green-600 text-white font-bold py-3 px-4 rounded-lg flex items-center justify-center space-x-2 transition hover:bg-green-700">
+                        <i data-lucide="plus-circle" class="w-5 h-5"></i>
+                        <span>添加新卡</span>
+                    </button>
+                    <button id="export-cards-btn" title="导出当前所有信用卡数据为 Excel 表格" class="flex-1 bg-blue bg-blue-600 text-white font-bold py-3 px-4 rounded-lg flex items-center justify-center space-x-2 transition hover:bg-blue-700">
+                    <i data-lucide="download" class="w-5 h-5"></i>
+                    <span>数据导出</span>
+                    </button>
+                </div>
             </div>
 
             <!-- 底部开源提示 -->
-            <div class="px-4 mt-4 mb-8 text-center text-xs text-gray-500">
-                信用卡掌柜V2.0 已在 <a href="https://github.com/woshichenghaibo/creditcards" target="_blank" rel="noopener noreferrer" class="text-blue-500 underline">github</a> 开源
+            <div class="px-4 mt-4 mb-8 text-center text-sm text-gray-500">
+                信用卡掌柜V2.1 已在 <a href="https://github.com/woshichenghaibo/creditcards" target="_blank" rel="noopener noreferrer" class="text-blue-500 underline">Github</a> 开源
             </div>
 
         </div>
@@ -653,7 +666,7 @@ function getHtml(env) {
                 <!-- 年费 (新增) -->
                 <div>
                     <label for="annual_fee" class="block text-sm font-medium text-gray-600">年费 (元)</label>
-                    <input type="number" id="annual_fee" placeholder="例如：200" max="1000000" min="0" class="mt-1 w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <input type="number" id="annual_fee" placeholder="例如：200。有年费则此卡被标注*号。" max="1000000" min="0" class="mt-1 w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500">
                 </div>
 
                 <!-- 备注 -->
@@ -750,6 +763,8 @@ function getHtml(env) {
             addButtons: document.getElementById('form-buttons-add'),
             editButtons: document.getElementById('form-buttons-edit'),
         };
+        const exportBtn = document.getElementById('export-cards-btn');
+        const addBtnContainer = document.getElementById('add-card-btn-container');
         
         // --- 页面导航 ---
         function showPage(pageId) {
@@ -968,7 +983,7 @@ function getHtml(env) {
                 const annualFeeVal = Number(card.annual_fee || 0);
                 if (annualFeeVal > 0) {
                     // 紫黑色（自定义深紫色），你可以改为其他颜色或 tailwind 类
-                    bankNameHtml = \`<div class="font-bold text-sm truncate" style="color:#2e1b3b">\${card.bank_name}</div>\`;
+                    bankNameHtml = \`<div class="font-bold text-sm text-black-900 truncate">\${card.bank_name}*</div>\`;
                 } else {
                     bankNameHtml = \`<div class="font-bold text-sm text-gray-900 truncate">\${card.bank_name}</div>\`;
                 }
@@ -1156,12 +1171,12 @@ function getHtml(env) {
                 authContainer.loginButton.classList.add('hidden');
                 authContainer.adminInfo.classList.remove('hidden');
                 authContainer.adminUsername.textContent = adminUsername;
-                document.getElementById('add-card-btn-container').classList.remove('hidden'); // 显示添加按钮
+                addBtnContainer.classList.remove('hidden'); // 显示添加与导出按钮
             } else {
                 authContainer.loginButton.classList.remove('hidden');
                 authContainer.adminInfo.classList.add('hidden');
                 authContainer.adminUsername.textContent = '';
-                document.getElementById('add-card-btn-container').classList.add('hidden'); // 隐藏添加按钮
+                addBtnContainer.classList.add('hidden'); // 隐藏添加与导出按钮
             }
         }
         
@@ -1518,6 +1533,85 @@ function getHtml(env) {
             }
         }
 
+        /**
+         * 将信用卡数据导出为 Excel 可打开的文件（使用 HTML table + application/vnd.ms-excel）
+         * 说明：为了兼容浏览器和避免引入大型第三方库，这里使用将 HTML 表格导出为 .xls 的方式（Excel 可以打开）。
+         */
+        async function exportCardsToExcel() {
+            try {
+                // 如果已经有缓存数据可以直接使用 allCards，否则再请求一次确保最新
+                let cards = allCards && allCards.length ? allCards : [];
+                if (!cards.length) {
+                    const resp = await fetch('/api/cards');
+                    const data = await resp.json();
+                    if (data.success) {
+                        cards = data.cards;
+                    } else {
+                        showToast(data.message || '获取数据失败', true);
+                        return;
+                    }
+                }
+
+                // 构造 HTML 表格
+                const headers = ['ID', '发卡银行', '卡号后4位', '卡片额度(元)', '出账日', '还款类型', '还款值', '宽限期(天)', '最长免息期(天)', '年费(元)', '备注'];
+                let table = '<table border="1"><thead><tr>';
+                headers.forEach(h => {
+                    table += '<th style="background-color:#f0f0f0;padding:4px;">' + h + '</th>';
+                });
+                table += '</tr></thead><tbody>';
+
+                cards.forEach(c => {
+                    table += '<tr>';
+                    table += '<td>' + (c.id ?? '') + '</td>';
+                    table += '<td>' + (escapeHtml(c.bank_name) ?? '') + '</td>';
+                    table += '<td>' + (c.last_4_digits ?? '') + '</td>';
+                    table += '<td>' + (c.card_limit ?? '') + '</td>';
+                    table += '<td>' + (c.billing_day ?? '') + '</td>';
+                    table += '<td>' + (c.payment_type ?? '') + '</td>';
+                    table += '<td>' + (c.payment_value ?? '') + '</td>';
+                    table += '<td>' + (c.grace_days ?? '') + '</td>';
+                    table += '<td>' + (c.max_grace_period ?? '') + '</td>';
+                    table += '<td>' + (c.annual_fee ?? '') + '</td>';
+                    table += '<td>' + (escapeHtml(c.notes) ?? '') + '</td>';
+                    table += '</tr>';
+                });
+
+                table += '</tbody></table>';
+
+                // 加上 UTF-8 BOM，确保 Excel 以 UTF-8 打开中文正常
+                const bom = '\uFEFF';
+                const blob = new Blob([bom + table], { type: 'application/vnd.ms-excel;charset=utf-8' });
+
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                const now = new Date();
+                const y = now.getFullYear();
+                const m = String(now.getMonth() + 1).padStart(2, '0');
+                const d = String(now.getDate()).padStart(2, '0');
+                a.href = url;
+                a.download = \`credit_cards_\${y}\${m}\${d}.xls\`; // .xls for HTML table
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                URL.revokeObjectURL(url);
+                showToast('导出已开始');
+            } catch (err) {
+                console.error(err);
+                showToast('导出失败', true);
+            }
+        }
+
+        // 简单 HTML 转义，避免表格被破坏
+        function escapeHtml(str) {
+            if (str == null) return '';
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+        }
+
         // --- 初始化和事件绑定 ---
         document.addEventListener('DOMContentLoaded', () => {
             // 页面导航
@@ -1545,9 +1639,16 @@ function getHtml(env) {
             form.form.onsubmit = handleFormSubmit;
             document.getElementById('form-delete-button').onclick = handleDeleteCard;
 
+            // 导出按钮事件
+            if (exportBtn) {
+                exportBtn.onclick = exportCardsToExcel;
+            }
+
             // 初始化
             fetchCards(); // 初始加载数据
             lucide.createIcons(); // 激活图标
+            // 初始化认证 UI（根据 sessionStorage 的 token）
+            updateAuthUI();
         });
 
     </script>
