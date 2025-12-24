@@ -145,12 +145,13 @@ VALUES
 
       * 保存您的 Worker 代码并部署。
       * 访问您的 Worker URL 即可看到应用运行效果。
+      * 您也可以将您的 Worker 连接到 Git 存储库来进行自动构建和部署。
 
 -----
 
 <br>
 
-包含所有功能、美化和交互逻辑的 **`workers.js`** 文件，您可以在上方看到。记得修改const ADMIN_TOKEN = "secret-admin-token-12345";这一行。
+包含所有功能、美化和交互逻辑的 **`worker.js`** 文件，您可以在上方看到。记得修改const ADMIN_TOKEN = "secret-admin-token-12345";这一行。
 
 
  **`workers.js`** 代码特点：
