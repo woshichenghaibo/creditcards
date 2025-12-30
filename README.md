@@ -77,7 +77,7 @@
 2.  **创建表结构：**
 
       * 进入您创建的 D1 数据库，转到 **控制台 (Console)** 选项卡。
-      * 粘贴以下 SQL 代码来创建 `credit_cards` 表，注意删掉“--”及后面的注释：
+      * 粘贴以下 SQL 代码来创建 `credit_cards` 表，注意删掉每行逗号后的部分包括“--”及后面的注释：
 
 ```sql
 CREATE TABLE IF NOT EXISTS credit_cards (
@@ -115,7 +115,7 @@ VALUES
 1.  **创建 Worker：**
 
       * 导航到 **Workers & Pages**，点击 **创建应用** -\> **创建 Worker**。
-      * 在 Worker 编辑器中，将默认代码替换为上面提供的 `workers.js` **完整代码**。
+      * 在 Worker 编辑器中，将默认代码替换为上面提供的 `worker.js` **完整代码**。
 
 2.  **绑定 D1 数据库：**
 
@@ -144,7 +144,7 @@ VALUES
 5.  **保存并部署：**
 
       * 保存您的 Worker 代码并部署。
-      * 访问您的 Worker URL 即可看到应用运行效果。
+      * 访问您的 Worker URL 即可看到应用运行效果，最好是绑定自有域名。
       * 您也可以将您的 Worker 连接到 Git 存储库来进行自动构建和部署。
 
 -----
