@@ -151,7 +151,7 @@ VALUES
 
 <br>
 
-包含所有功能、美化和交互逻辑的 **`worker.js`** 文件，您可以在上方看到。记得修改const ADMIN_TOKEN = "secret-admin-token-12345";这一行。
+项目总结：本项目包含所有信用卡管理功能、美化和交互逻辑的 **`worker.js`** 文件，您可以10分钟部署。记得修改const ADMIN_TOKEN = "secret-admin-token-12345";这一行。
 
 
  **`workers.js`** 代码特点：
