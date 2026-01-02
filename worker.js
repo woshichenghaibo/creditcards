@@ -622,7 +622,7 @@ function getHtml(env) {
             </div>
 
             <div class="px-4 mt-4 mb-8 text-center text-sm text-gray-500">
-                信用卡掌柜V3.0.20251224 已在 <a href="https://github.com/woshichenghaibo/creditcards" target="_blank" rel="noopener noreferrer" class="text-blue-500 underline">Github</a> 开源
+                信用卡掌柜V3.3.2026.01.02 已在 <a href="https://github.com/woshichenghaibo/creditcards" target="_blank" rel="noopener noreferrer" class="text-blue-500 underline">Github</a> 开源
             </div>
 
         </div>
