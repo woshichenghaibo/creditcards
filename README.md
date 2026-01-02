@@ -196,3 +196,7 @@ PRAGMA table_info(credit_cards);
 | 10  | annual_fee        | INTEGER |    0    | 0          | 0  |
 
 即为正确。
+
+截图示例：
+
+   ![移动端截图（截图显示，如不能显示请查看项目demo网站）](demo.jpg)
