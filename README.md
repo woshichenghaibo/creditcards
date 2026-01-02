@@ -1,6 +1,6 @@
 
 
-# 💳 信用卡掌柜 (MyCreditCardApp)
+# 💳 信用卡掌柜 (MyCreditCard V3.3)
 
 基于 Cloudflare Workers 和 D1 数据库构建的单文件无服务器信用卡管理应用。
 
