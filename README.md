@@ -10,7 +10,7 @@
 
 该应用的核心优势在于其**单文件架构**和**无服务器部署**：
 
-  * **技术栈：** 采用 Cloudflare Workers（作为后端逻辑和前端服务）结合 D1 数据库（持久化存储）。整个应用（HTML/Tailwind CSS/JavaScript/Worker 逻辑）仅存在于一个 `workers.js` 文件中。
+  * **技术栈：** 采用 Cloudflare Workers（作为后端逻辑和前端服务）结合 D1 数据库（持久化存储）。整个应用（HTML/Tailwind CSS/JavaScript/Worker 逻辑）仅存在于一个 `worker.js` 文件中。
   * **功能目标：** 帮助用户快速查询每张卡的**账单日**、**还款日**以及**剩余免息期**等核心信息，避免错过还款日期。
   * **部署环境：** 部署在 Cloudflare Workers 上，具备极高的运行速度和可用性。
 
@@ -20,6 +20,7 @@
   * **管理面板：** 提供管理员登录入口，实现卡片信息的添加、修改和删除。
   * **多模式视图：** 支持按“还款日”或“账单日”排序的列表，以及可切换标注模式的日历小控件。
   * **微信提醒：** 支持检测到存在还剩1天还款日的信用卡时，则调用PUSHPLUS的接口实现信息推送（V3.0版本新增功能）。
+  * **数据导出：** 支持数据导出为excel表格，随时备份。
 
 ## 2\. 页面功能及操作方法 (Features & Usage)
 
@@ -77,20 +78,20 @@
 2.  **创建表结构：**
 
       * 进入您创建的 D1 数据库，转到 **控制台 (Console)** 选项卡。
-      * 粘贴以下 SQL 代码来创建 `credit_cards` 表，注意删掉每行逗号后的部分包括“--”及后面的注释：
+      * 粘贴以下 SQL 代码来创建 `credit_cards` 表：
 
 ```sql
 CREATE TABLE IF NOT EXISTS credit_cards (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,    -- 自增主键，Worker 的 INSERT 不提供 id 时可用
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
     bank_name TEXT NOT NULL,
     last_4_digits TEXT NOT NULL,
     card_limit INTEGER,
     billing_day INTEGER NOT NULL,
-    payment_type TEXT NOT NULL,              -- 'days_after_billing' 或 'fixed_day'
+    payment_type TEXT NOT NULL,
     payment_value INTEGER NOT NULL,
-    grace_days INTEGER DEFAULT 0,            -- 宽限期 (天)
-    max_grace_period INTEGER,                -- 自动计算并由后端/前端存储
-    annual_fee INTEGER DEFAULT 0,            -- 年费 (元)，默认 0
+    grace_days INTEGER DEFAULT 0,
+    max_grace_period INTEGER,
+    annual_fee INTEGER DEFAULT 0,
     notes TEXT
 );
 ```
