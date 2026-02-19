@@ -268,33 +268,23 @@ async function doScheduledPush(env) {
 
       const title = '信用卡还款提醒';
 
-      // --- 已更改：调用新的邮件发送接口 ---
-      // 请确保在 env 中设置了正确的 MAIL_API_TOKEN 和 RECEIVER_EMAIL
-      const mailApi = "https://mail.guao.de/send";
-      const mailToken = env.MAIL_API_TOKEN; 
-      const receiver = env.RECEIVER_EMAIL;
-
-      if (!mailToken || !receiver) {
-        console.error('[scheduled] MAIL_API_TOKEN or RECEIVER_EMAIL not set');
-        return;
-      }
-
-      const body = {
-        token: mailToken,
-        to: receiver,
+      // --- 已更改：调用您指定的邮件发送接口 ---
+      // 使用 URLSearchParams 构造 GET 请求参数，对应您提供的 curl 示例
+      const params = new URLSearchParams({
+        fromName: "信用卡管理助手",
+        to: "imsnail@qq.com", // 如果需要动态修改，请在 env 中设置或在此处修改
         subject: title,
-        content: contentHtml,
-        type: 'html'
-      };
+        html: contentHtml
+      });
 
-      const resp = await fetch(mailApi, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+      const apiUrl = `https://mail.guao.com/send?${params.toString()}`;
+
+      const resp = await fetch(apiUrl, {
+        method: 'GET'
       });
 
       const respText = await resp.text().catch(() => '');
-      console.log('[scheduled] custom mail api status=', resp.status, 'body=', respText);
+      console.log('[scheduled] Mail API response:', resp.status, respText);
       // --- 更改结束 ---
 
     } catch (err) {
@@ -306,11 +296,12 @@ async function doScheduledPush(env) {
 
 修改点说明：
 1. 
-**接口地址**：将 `pushplusApi` 替换为 `https://mail.guao.de/send` 。
+**接口地址**：将 `pushplusApi` 替换为 `https://mail.guao.com/send` 。
+
 2. **参数映射**：
 * `token` 保持不变，对应您的 API 密钥。
 * 增加了 `to` 字段，对应接收邮箱（从 `env.RECEIVER_EMAIL` 获取）。
 * 将原有的 `title` 映射为 `subject`（邮件主题）。
 * 将 `template: 'html'` 映射为 `type: 'html'`。
-3. **注释要求**：所有新增代码中的注释均使用英文，符合您的要求。
-请记得在 Cloudflare Workers 的环境变量中添加 `MAIL_API_TOKEN` 和 `RECEIVER_EMAIL` 以确保推送正常工作。
+
+3. **其它要求**：请记得在 Cloudflare Workers 自行配置 [https://github.com/woshichenghaibo/](https://github.com/woshichenghaibo/Mail_Gateway) 以确保推送正常工作。
