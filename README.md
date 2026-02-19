@@ -207,89 +207,83 @@ PRAGMA table_info(credit_cards);
 保留所有其他逻辑和代码结构不变，以下是修改后的 `doScheduledPush` 函数：
 
 ```javascript
+/**
+ * doScheduledPush.
+ */
 async function doScheduledPush(env) {
-    function escapeHtmlServer(str) {
-      if (str == null) return '';
-      return String(str)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#039;');
-    }
-  
-    function formatDateYMD(d) {
-      const dt = d instanceof Date ? d : new Date(d);
-      const y = dt.getFullYear();
-      const m = String(dt.getMonth() + 1).padStart(2, '0');
-      const day = String(dt.getDate()).padStart(2, '0');
-      return `${y}-${m}-${day}`;
-    }
-  
-    try {
-      const { results } = await env.DB.prepare('SELECT * FROM credit_cards').all();
-      const cards = results || [];
-  
-      const today = new Date();
-      const dueSoon = [];
-  
-      for (const c of cards) {
-        if (!c) continue;
-        if (typeof c.billing_day === 'undefined' || typeof c.payment_type === 'undefined' || typeof c.payment_value === 'undefined') {
-          continue;
-        }
-  
-        const info = getCardDatesServer(c, today);
-        if (info && Number(info.daysUntilPayment) === 1) {
-          dueSoon.push({ card: c, info });
-        }
+  function escapeHtmlServer(str) {
+    if (str == null) return '';
+    return String(str).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":"&#039;"}[m]));
+  }
+
+  function formatDateYMD(d) {
+    const dt = d instanceof Date ? d : new Date(d);
+    return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+  }
+
+  try {
+    const { results } = await env.DB.prepare('SELECT * FROM credit_cards').all();
+    const cards = results || [];
+    const today = new Date();
+    const dueSoon = [];
+
+    for (const c of cards) {
+      if (!c) continue;
+      if (typeof c.billing_day === 'undefined' || typeof c.payment_type === 'undefined' || typeof c.payment_value === 'undefined') continue;
+      
+      const info = getCardDatesServer(c, today);
+      if (info && Number(info.daysUntilPayment) === 1) {
+        dueSoon.push({ card: c, info });
       }
-  
-      if (dueSoon.length === 0) {
-        console.log('[scheduled] no cards due in 1 day');
-        return;
-      }
-  
-      const listHtml = dueSoon.map(item => {
-        const c = item.card;
-        const deadline = item.info && item.info.nextPaymentDeadline ? new Date(item.info.nextPaymentDeadline) : null;
-        const dateStr = deadline ? formatDateYMD(deadline) : '';
-        const tail = c.last_4_digits ? `（${escapeHtmlServer(String(c.last_4_digits))}）` : '';
-        return `<p style="margin:6px 0;font-size:14px;">${escapeHtmlServer(c.bank_name || '')}${tail}：到期日 <strong style="color:#e53e3e">${dateStr}</strong></p>`;
-      }).join('');
-
-      const contentHtml = `
-        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial;">
-          <h2 style="margin:0 0 8px 0;font-size:16px;">信用卡还款提醒（仅剩余 1 天）</h2>
-          ${listHtml}
-          <p style="margin-top:8px;color:#666;font-size:13px;">请及时还款以避免逾期费用。若已还款请忽略。</p>
-        </div>
-      `;
-
-      const title = '信用卡还款提醒';
-
-      // --- 已更改：调用您指定的邮件发送接口 ---
-      // 使用 URLSearchParams 构造 GET 请求参数，对应您提供的 curl 示例
-      const params = new URLSearchParams({
-        fromName: "信用卡管理助手",
-        to: "imsnail@qq.com", // 如果需要动态修改，请在 env 中设置或在此处修改
-        subject: title,
-        html: contentHtml
-      });
-
-      const apiUrl = `https://mail.guao.com/send?${params.toString()}`;
-
-      const resp = await fetch(apiUrl, {
-        method: 'GET'
-      });
-
-      const respText = await resp.text().catch(() => '');
-      console.log('[scheduled] Mail API response:', resp.status, respText);
-      // --- 更改结束 ---
-
-    } catch (err) {
-      console.error('[scheduled] error in doScheduledPush:', err);
     }
+
+    if (dueSoon.length === 0) {
+      console.log('[scheduled] No cards due tomorrow.');
+      return;
+    }
+
+    const listHtml = dueSoon.map(item => {
+      const c = item.card;
+      const dDate = item.info && item.info.nextPaymentDeadline ? new Date(item.info.nextPaymentDeadline) : null;
+      const dateStr = dDate ? formatDateYMD(dDate) : '';
+      
+      // Fixed the 'tail' logic to avoid potential character issues
+      let tail = "";
+      if (c.last_4_digits) {
+        tail = " (尾号 " + escapeHtmlServer(c.last_4_digits) + ")";
+      }
+      
+      return '<p style="margin:10px 0;font-size:15px;color:#334155;">· <b>' + escapeHtmlServer(c.bank_name) + '</b>' + tail + '： <span style="color:#e11d48;font-weight:bold;">' + dateStr + '</span> ·&#8203;</p>';
+    }).join('');
+
+    // Constructed with clean blocks to prevent double title perception
+    const contentHtml = `
+<div style="font-family:sans-serif;padding:20px;color:#1e293b;max-width:600px;border:1px solid #eee;border-radius:8px;background-color:#ffffff;">
+  <p style="font-size:15px;margin-top:0;margin-bottom:15px;color:#475569;">以下账单即将到最后还款期限，请尽快还款：&#8203;</p>
+  ${listHtml}
+  <p style="margin-top:20px;font-size:12px;color:#94a3b8;border-top:1px dashed #eee;padding-top:10px;">&#8203;&#8203;&#8203;提示：尽快还款，避免逾期。如已还款请忽略。
+    点击<a href="https://cards.guao.de/" style="color:#3b82f6;text-decoration:none;">https://cards.guao.de/</a>查看<br/></p>
+</div>`.trim();
+    const payload = {
+      fromName: "信用卡助手",
+      to: "78901234@qq.com",
+      subject: "还款日到期提醒 - 仅剩余1天",
+      text: "您有信用卡账单即将到期，请查看详情。",
+      html: contentHtml
+    };
+
+    const response = await fetch("https://mail.guao.de/send", {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    const respText = await response.text();
+    console.log('[scheduled] Push status:', response.status, respText);
+
+  } catch (err) {
+    console.error('[scheduled] Error:', err);
+  }
 }
 
 ```
