@@ -155,7 +155,7 @@ VALUES
 项目总结：本项目包含所有信用卡管理功能、美化和交互逻辑的 **`worker.js`** 文件，您可以10分钟部署。记得修改const ADMIN_TOKEN = "secret-admin-token-12345";这一行。
 
 
- **`workers.js`** 代码特点：
+ **`worker.js`** 代码特点：
 
 1.  实现了 Cloudflare Workers 路由和 D1 数据库 CRUD 操作。
 2.  在前端实现了完整的客户端路由（`dashboard`, `login`, `add`, `manage`）。
@@ -168,7 +168,7 @@ VALUES
 您可以按照 README 中的详细部署步骤，将这个单文件应用部署到您的 Cloudflare 环境中。
 
 ### 特殊步骤 
-注意，如果你是2025年11月10日之前部署的1.0版本升级，请先：
+一、注意，如果你是2025年11月10日之前部署的1.0版本升级，请先：
       粘贴以下 SQL 代码来插入新列，因为数据库中新增了年费：
 
 ```sql
@@ -201,3 +201,116 @@ PRAGMA table_info(credit_cards);
 截图示例：
 
    ![移动端截图（截图显示，如不能显示请查看项目demo网站）](demo.jpg)
+
+二、如果你想换一种推送方式，这里推荐使用QQ邮箱推送，将QQ邮箱设置为置顶，提醒更加醒目。推送逻辑从 PushPlus 更改为您指定的 `https://mail.guao.de/send` 接口。
+
+保留所有其他逻辑和代码结构不变，以下是修改后的 `doScheduledPush` 函数：
+
+```javascript
+async function doScheduledPush(env) {
+    function escapeHtmlServer(str) {
+      if (str == null) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+  
+    function formatDateYMD(d) {
+      const dt = d instanceof Date ? d : new Date(d);
+      const y = dt.getFullYear();
+      const m = String(dt.getMonth() + 1).padStart(2, '0');
+      const day = String(dt.getDate()).padStart(2, '0');
+      return `${y}-${m}-${day}`;
+    }
+  
+    try {
+      const { results } = await env.DB.prepare('SELECT * FROM credit_cards').all();
+      const cards = results || [];
+  
+      const today = new Date();
+      const dueSoon = [];
+  
+      for (const c of cards) {
+        if (!c) continue;
+        if (typeof c.billing_day === 'undefined' || typeof c.payment_type === 'undefined' || typeof c.payment_value === 'undefined') {
+          continue;
+        }
+  
+        const info = getCardDatesServer(c, today);
+        if (info && Number(info.daysUntilPayment) === 1) {
+          dueSoon.push({ card: c, info });
+        }
+      }
+  
+      if (dueSoon.length === 0) {
+        console.log('[scheduled] no cards due in 1 day');
+        return;
+      }
+  
+      const listHtml = dueSoon.map(item => {
+        const c = item.card;
+        const deadline = item.info && item.info.nextPaymentDeadline ? new Date(item.info.nextPaymentDeadline) : null;
+        const dateStr = deadline ? formatDateYMD(deadline) : '';
+        const tail = c.last_4_digits ? `（${escapeHtmlServer(String(c.last_4_digits))}）` : '';
+        return `<p style="margin:6px 0;font-size:14px;">${escapeHtmlServer(c.bank_name || '')}${tail}：到期日 <strong style="color:#e53e3e">${dateStr}</strong></p>`;
+      }).join('');
+
+      const contentHtml = `
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial;">
+          <h2 style="margin:0 0 8px 0;font-size:16px;">信用卡还款提醒（仅剩余 1 天）</h2>
+          ${listHtml}
+          <p style="margin-top:8px;color:#666;font-size:13px;">请及时还款以避免逾期费用。若已还款请忽略。</p>
+        </div>
+      `;
+
+      const title = '信用卡还款提醒';
+
+      // --- 已更改：调用新的邮件发送接口 ---
+      // 请确保在 env 中设置了正确的 MAIL_API_TOKEN 和 RECEIVER_EMAIL
+      const mailApi = "https://mail.guao.de/send";
+      const mailToken = env.MAIL_API_TOKEN; 
+      const receiver = env.RECEIVER_EMAIL;
+
+      if (!mailToken || !receiver) {
+        console.error('[scheduled] MAIL_API_TOKEN or RECEIVER_EMAIL not set');
+        return;
+      }
+
+      const body = {
+        token: mailToken,
+        to: receiver,
+        subject: title,
+        content: contentHtml,
+        type: 'html'
+      };
+
+      const resp = await fetch(mailApi, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+
+      const respText = await resp.text().catch(() => '');
+      console.log('[scheduled] custom mail api status=', resp.status, 'body=', respText);
+      // --- 更改结束 ---
+
+    } catch (err) {
+      console.error('[scheduled] error in doScheduledPush:', err);
+    }
+}
+
+```
+
+修改点说明：
+1. 
+**接口地址**：将 `pushplusApi` 替换为 `https://mail.guao.de/send` 。
+2. **参数映射**：
+* `token` 保持不变，对应您的 API 密钥。
+* 增加了 `to` 字段，对应接收邮箱（从 `env.RECEIVER_EMAIL` 获取）。
+* 将原有的 `title` 映射为 `subject`（邮件主题）。
+* 将 `template: 'html'` 映射为 `type: 'html'`。
+3. **注释要求**：所有新增代码中的注释均使用英文，符合您的要求。
+请记得在 Cloudflare Workers 的环境变量中添加 `MAIL_API_TOKEN` 和 `RECEIVER_EMAIL` 以确保推送正常工作。
