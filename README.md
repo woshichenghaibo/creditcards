@@ -202,7 +202,7 @@ PRAGMA table_info(credit_cards);
 
    ![移动端截图（截图显示，如不能显示请查看项目demo网站）](demo.jpg)
 
-二、如果你想换一种推送方式，这里推荐使用QQ邮箱推送，将QQ邮箱设置为置顶，提醒更加醒目。推送逻辑从 PushPlus 更改为您指定的 `https://mail.guao.de/send` 接口。
+二、如果你想换一种推送方式，这里推荐使用QQ邮箱推送，将QQ邮箱设置为置顶，提醒更加醒目。推送逻辑从 PushPlus 更改为您指定的 `https://mail.guao.com/send` 接口。
 
 保留所有其他逻辑和代码结构不变，以下是修改后的 `doScheduledPush` 函数：
 
@@ -295,6 +295,7 @@ async function doScheduledPush(env) {
 ```
 
 修改点说明：
+
 1. 
 **接口地址**：将 `pushplusApi` 替换为 `https://mail.guao.com/send` 。
 
