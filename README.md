@@ -259,14 +259,14 @@ async function doScheduledPush(env) {
     // Constructed with clean blocks to prevent double title perception
     const contentHtml = `
 <div style="font-family:sans-serif;padding:20px;color:#1e293b;max-width:600px;border:1px solid #eee;border-radius:8px;background-color:#ffffff;">
-  <p style="font-size:15px;margin-top:0;margin-bottom:15px;color:#475569;">以下账单即将到最后还款期限，请尽快还款：&#8203;</p>
+  <p style="font-size:18px;margin-top:0;margin-bottom:15px;color:#475569;line-height:1.5;">以下账单即将到最后还款期限，请尽快还款：&#8203;</p>
   ${listHtml}
-  <p style="margin-top:20px;font-size:12px;color:#94a3b8;border-top:1px dashed #eee;padding-top:10px;">&#8203;&#8203;&#8203;提示：尽快还款，避免逾期。如已还款请忽略。
+  <p style="margin-top:20px;font-size:15px;color:#94a3b8;border-top:1px dashed #eee;padding-top:10px;line-height:1.5;">&#8203;&#8203;&#8203;提示：尽快还款，避免逾期。如已还款请忽略。
     点击<a href="https://cards.guao.de/" style="color:#3b82f6;text-decoration:none;">https://cards.guao.de/</a>查看<br/></p>
 </div>`.trim();
     const payload = {
       fromName: "信用卡助手",
-      to: "78901234@qq.com",
+      to: "12345678@qq.com",
       subject: "还款日到期提醒 - 仅剩余1天",
       text: "您有信用卡账单即将到期，请查看详情。",
       html: contentHtml
