@@ -2,7 +2,7 @@
 
 # 💳 信用卡掌柜 (MyCreditCard)
 
-基于 Cloudflare Workers 和 D1 数据库构建的单文件无服务器信用卡管理应用。当前版本：V3.3。
+基于 Cloudflare Workers 和 D1 数据库构建的单文件无服务器信用卡管理应用。当前版本：V3.4。
 
 ## 1\. 应用简介 (Application Overview)
 
@@ -128,9 +128,9 @@ VALUES
 3.  **配置环境变量：**
 
       * 在 **Worker 设置** -\> **变量 (Variables)** -\> **环境变量 (Environment Variables)** 下，添加以下两个变量（用于管理员登录）：
-          * **变量名：** `ADMIN_USERNAME`
+          * **变量名：** `USERNAME`
           * **值：** 设置您想要的管理员用户名（例如 `admin`）
-          * **变量名：** `ADMIN_PASSWORD`
+          * **变量名：** `PASSWORD`
           * **值：** 设置您想要的管理员密码（例如 `123456`）
           * **变量名：** `PUSHPLUS_API`
           * **值：** 设置您申请的推送加账号的api，推送加的网站说明提供（例如 `https://www.pushplus.plus/send`）
