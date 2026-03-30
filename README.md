@@ -301,4 +301,4 @@ async function doScheduledPush(env) {
 
 3. **其它要求**：请记得在 Cloudflare Workers 自行配置 [https://github.com/woshichenghaibo/](https://github.com/woshichenghaibo/Mail_Gateway) 以确保推送正常工作。
 
-![Visitor Count](https://profile-counter.glitch.me/woshichenghaibo/count.svg)
+![](https://counter.adofai.xyz/get/@woshichenghaibo)
