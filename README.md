@@ -2,7 +2,7 @@
 
 # 💳 信用卡掌柜 (MyCreditCard)
 
-基于 Cloudflare Workers 和 D1 数据库构建的单文件无服务器信用卡管理应用。当前版本：V3.4。
+基于 Cloudflare Workers 和 D1 数据库构建的单文件无服务器信用卡管理应用。当前版本：V3.5。
 
 ## 1\. 应用简介 (Application Overview)
 
